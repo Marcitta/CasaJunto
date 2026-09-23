@@ -13,6 +13,63 @@ interface DomesticSupportModalProps {
   initialData?: DomesticSupport | null;
 }
 
+/**
+ * Mapeia erros de validação de horário para mensagens amigáveis na UI.
+ * Não expõe termos técnicos (startTime, endTime, index, HH:mm, regex, Firebase).
+ */
+export function mapScheduleErrorToFriendly(
+  builtSchedule: DomesticSupportSchedule[],
+  rawError?: string
+): string {
+  // 1. Horário inicial ou final vazio/incompleto
+  const hasEmptyOrIncomplete = builtSchedule.some(
+    (slot) =>
+      !slot.startTime ||
+      !slot.endTime ||
+      !slot.startTime.trim() ||
+      !slot.endTime.trim() ||
+      slot.startTime.length < 5 ||
+      slot.endTime.length < 5
+  );
+
+  if (hasEmptyOrIncomplete) {
+    return 'Preencha o horário de início e término para todos os dias selecionados.';
+  }
+
+  if (rawError) {
+    const lower = rawError.toLowerCase();
+    if (
+      lower.includes('hh:mm') ||
+      lower.includes('invalid starttime') ||
+      lower.includes('invalid endtime') ||
+      lower.includes('format')
+    ) {
+      return 'Preencha o horário de início e término para todos os dias selecionados.';
+    }
+
+    // 2. Início >= término
+    if (
+      lower.includes('earlier than endtime') ||
+      lower.includes('strictly earlier') ||
+      lower.includes('must be earlier') ||
+      lower.includes('earlier')
+    ) {
+      return 'O horário de início deve ser anterior ao horário de término.';
+    }
+
+    // 3. Qualquer outra inconsistência de horário
+    return 'Verifique os horários informados.';
+  }
+
+  // Verificação direta de início >= término
+  const hasInvalidRange = builtSchedule.some((slot) => slot.startTime >= slot.endTime);
+  if (hasInvalidRange) {
+    return 'O horário de início deve ser anterior ao horário de término.';
+  }
+
+  return 'Verifique os horários informados.';
+}
+
 export const DomesticSupportModal: React.FC<DomesticSupportModalProps> = ({
   isOpen,
   onClose,
@@ -106,12 +163,7 @@ export const DomesticSupportModal: React.FC<DomesticSupportModalProps> = ({
 
     const validation = validateDomesticSupportSchedule(builtSchedule);
     if (!validation.valid) {
-      // Mensagem amigável sem códigos técnicos
-      if (validation.error?.includes('startTime must be strictly earlier')) {
-        setErrorMessage('O horário de início deve ser anterior ao horário de término em todos os dias selecionados.');
-      } else {
-        setErrorMessage(validation.error || 'Verifique os horários informados.');
-      }
+      setErrorMessage(mapScheduleErrorToFriendly(builtSchedule, validation.error));
       return;
     }
 
@@ -125,7 +177,17 @@ export const DomesticSupportModal: React.FC<DomesticSupportModalProps> = ({
       });
       onClose();
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Ocorreu um erro ao salvar. Tente novamente.');
+      const rawMsg = err?.message ? String(err.message) : '';
+      if (
+        rawMsg.toLowerCase().includes('time') ||
+        rawMsg.toLowerCase().includes('schedule') ||
+        rawMsg.toLowerCase().includes('hh:mm') ||
+        rawMsg.toLowerCase().includes('earlier')
+      ) {
+        setErrorMessage(mapScheduleErrorToFriendly(builtSchedule, rawMsg));
+      } else {
+        setErrorMessage('Ocorreu um erro ao salvar. Tente novamente.');
+      }
     } finally {
       setIsSubmitting(false);
     }

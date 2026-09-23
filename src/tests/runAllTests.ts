@@ -47,6 +47,7 @@ import { runChaosSession1dHf5TestSuite } from './chaosSession1dHf5.test';
 import { runStabilizationCloseout1aTestSuite } from './stabilizationCloseout1a.test';
 import { runDomesticSupport1aTestSuite } from './domesticSupport1a.test';
 import { runDomesticSupport1bTestSuite } from './domesticSupport1b.test';
+import { runDomesticSupport1bHf1TestSuite } from './domesticSupport1bHf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -698,6 +699,20 @@ for (const r of ds1bResults) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] DomesticSupport1B ${r.id}: ${r.name} - ${r.error || ''}`);
+  }
+}
+
+// 50. DOMESTIC-SUPPORT-1B-HF1: Mensagens amigáveis de validação de horário (10 TESTES: DS1B-HF1-01 - DS1B-HF1-10)
+console.log('\n--- GRUPO 50: DOMESTIC-SUPPORT-1B-HF1 (MENSAGENS AMIGÁVEIS DE VALIDAÇÃO DE HORÁRIO - DS1B-HF1-01 - DS1B-HF1-10) ---');
+const ds1bHf1Results = await runDomesticSupport1bHf1TestSuite();
+for (const r of ds1bHf1Results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] DomesticSupport1B-HF1 ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] DomesticSupport1B-HF1 ${r.id}: ${r.name} - ${r.error || ''}`);
   }
 }
 
