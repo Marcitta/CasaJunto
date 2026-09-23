@@ -277,6 +277,7 @@ for (const r of todayViewResults) {
 }
 
 // 17. Task Catalog Batch UI (16 TESTES: TC-B01 - TC-B16)
+console.log('\n--- GRUPO 17: TASK CATALOG BATCH UI (16 TESTES: TC-B01 - TC-B16) ---');
 const batchUIResults = await runTaskCatalogBatchTests();
 totalTests += batchUIResults.passed + batchUIResults.failed;
 totalPassed += batchUIResults.passed;
@@ -601,7 +602,7 @@ for (const r of secRecResults) {
 }
 
 // 43. HOTFIX-TASK-CREATE-1-R2D: Routine Generation & Distribution Decoupling (20 TESTES: TC-R2D-01 - TC-R2D-20)
-console.log('\n--- GRUPO 45: HOTFIX-TASK-CREATE-1-R2D (ROUTINE DECOUPLING - TC-R2D-01 - TC-R2D-20) ---');
+console.log('\n--- GRUPO 43: HOTFIX-TASK-CREATE-1-R2D (ROUTINE DECOUPLING - TC-R2D-01 - TC-R2D-20) ---');
 const r2dResults = await runRoutineDecouplingR2DTestSuite();
 for (const r of r2dResults) {
   totalTests++;
@@ -614,7 +615,8 @@ for (const r of r2dResults) {
   }
 }
 
-console.log('\n--- GRUPO 46: CHAOS-1D-HF4 (PARTICIPANT SCOPING & 100% PROMPT - CHF4-01 - CHF4-22) ---');
+// 44. CHAOS-1D-HF4: Participant Scoping & 100% Prompt (36 TESTES: CHF4-01 - CHF4-22, CHF4R1-01 - CHF4R1-14)
+console.log('\n--- GRUPO 44: CHAOS-1D-HF4 (PARTICIPANT SCOPING & 100% PROMPT - CHF4-01 - CHF4-22) ---');
 const hf4Results = await runChaosSession1dHf4TestSuite();
 for (const r of hf4Results) {
   totalTests++;
@@ -627,7 +629,8 @@ for (const r of hf4Results) {
   }
 }
 
-console.log('\n--- GRUPO 47: CHAOS-1D-HF4-R3 (RUNTIME FIRESTORE SERIALIZATION BOUNDARY - R3-01 - R3-15) ---');
+// 45. CHAOS-1D-HF4-R3: Runtime Firestore Serialization Boundary (15 TESTES: R3-01 - R3-15)
+console.log('\n--- GRUPO 45: CHAOS-1D-HF4-R3 (RUNTIME FIRESTORE SERIALIZATION BOUNDARY - R3-01 - R3-15) ---');
 const hf4r3Results = await runChaosSession1dHf4R3TestSuite();
 for (const r of hf4r3Results) {
   totalTests++;
@@ -640,7 +643,8 @@ for (const r of hf4r3Results) {
   }
 }
 
-console.log('\n--- GRUPO 48: CHAOS-1D-HF5 (SESSION-SCOPED COMPLETION & ONE_TIME ELIGIBILITY - HF5-01 - HF5-24) ---');
+// 46. CHAOS-1D-HF5: Session-Scoped Completion & ONE_TIME Eligibility (24 TESTES: HF5-01 - HF5-24)
+console.log('\n--- GRUPO 46: CHAOS-1D-HF5 (SESSION-SCOPED COMPLETION & ONE_TIME ELIGIBILITY - HF5-01 - HF5-24) ---');
 const hf5Results = await runChaosSession1dHf5TestSuite();
 for (const r of hf5Results) {
   totalTests++;
@@ -653,7 +657,8 @@ for (const r of hf5Results) {
   }
 }
 
-console.log('\n--- GRUPO 49: STABILIZATION-CLOSEOUT-1A (CANONICAL ASSIGNMENT RELOAD & SCOPED COMPLETION - SC1A-01 - SC1A-18) ---');
+// 47. STABILIZATION-CLOSEOUT-1A: Canonical Assignment Reload & Scoped Completion (18 TESTES: SC1A-01 - SC1A-18)
+console.log('\n--- GRUPO 47: STABILIZATION-CLOSEOUT-1A (CANONICAL ASSIGNMENT RELOAD & SCOPED COMPLETION - SC1A-01 - SC1A-18) ---');
 const sc1aResults = await runStabilizationCloseout1aTestSuite();
 for (const r of sc1aResults) {
   totalTests++;
