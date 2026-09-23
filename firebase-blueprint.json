@@ -156,6 +156,20 @@
         "activeSessionId": { "type": "string", "description": "ID of active session or null", "optional": true },
         "updatedAt": { "type": "string", "description": "Last lock update timestamp" }
       }
+    },
+    "domesticSupports": {
+      "collection": "families/{familyId}/domesticSupports",
+      "description": "Ajuda Externa / Diarista (CLEANER) schedule and configuration for household support",
+      "fields": {
+        "id": { "type": "string", "description": "Unique domestic support ID" },
+        "familyId": { "type": "string", "description": "Tenant Family ID" },
+        "name": { "type": "string", "description": "Cleaner or support provider name" },
+        "type": { "type": "string", "description": "CLEANER" },
+        "active": { "type": "boolean", "description": "Whether active for task delegation" },
+        "schedule": { "type": "array", "description": "Array of weekday and time range schedule slots" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      }
     }
   }
 }

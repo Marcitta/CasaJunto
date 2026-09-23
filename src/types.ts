@@ -114,6 +114,31 @@ export interface Member {
   updatedAt?: string;
 }
 
+// DOMESTIC-SUPPORT-1A: Ajuda Externa / Diarista
+export type DomesticSupportType = 'CLEANER';
+
+export interface DomesticSupportSchedule {
+  weekday: number; // 0-6 (0 = Domingo, 6 = Sábado)
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+}
+
+export interface DomesticSupport {
+  id: string;
+  familyId: string;
+  name: string;
+  type: DomesticSupportType;
+  active: boolean;
+  schedule: DomesticSupportSchedule[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExecutionTarget = 
+  | 'HOUSEHOLD' 
+  | 'EXTERNAL_SUPPORT' 
+  | 'FLEXIBLE';
+
 export interface Room {
   id: string;
   name: string;
@@ -166,6 +191,8 @@ export interface Task {
   chaosSessionId?: string;
   chaos_session_id?: string;
   chaosStrategy?: ChaosTaskStrategy;
+  executionTarget?: ExecutionTarget;
+  domesticSupportId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -280,6 +307,8 @@ export interface FamilyTask {
   rotational?: boolean;
   active: boolean;
   chaosEligible?: boolean;
+  executionTarget?: ExecutionTarget;
+  domesticSupportId?: string | null;
   customTitle?: string;
   custom_title?: string;
   customDescription?: string;

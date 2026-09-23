@@ -45,6 +45,7 @@ import { runChaosSession1dHf4TestSuite } from './chaosSession1dHf4.test';
 import { runChaosSession1dHf4R3TestSuite } from './chaosSession1dHf4R3.test';
 import { runChaosSession1dHf5TestSuite } from './chaosSession1dHf5.test';
 import { runStabilizationCloseout1aTestSuite } from './stabilizationCloseout1a.test';
+import { runDomesticSupport1aTestSuite } from './domesticSupport1a.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -668,6 +669,20 @@ for (const r of sc1aResults) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] Stabilization1A ${r.id}: ${r.name} - ${r.error || ''}`);
+  }
+}
+
+// 48. DOMESTIC-SUPPORT-1A: Domain + Persistence Foundation for Ajuda Externa / Diarista (25 TESTES: DS1A-01 - DS1A-25)
+console.log('\n--- GRUPO 48: DOMESTIC-SUPPORT-1A (DOMAIN & PERSISTENCE FOUNDATION - DS1A-01 - DS1A-25) ---');
+const ds1aResults = await runDomesticSupport1aTestSuite();
+for (const r of ds1aResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] DomesticSupport1A ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] DomesticSupport1A ${r.id}: ${r.name} - ${r.error || ''}`);
   }
 }
 

@@ -284,6 +284,17 @@ service cloud.firestore {
         allow write: if isAdminOfFamily(familyId);
       }
 
+      // DOMESTIC-SUPPORT-1A: AJUDA EXTERNA / DIARISTA (CLEANER)
+      match /domesticSupports/{domesticSupportId} {
+        // Read: Qualquer membro autenticado da família
+        allow read: if isMemberOfFamily(familyId);
+        // Write: Exclusivo ADMIN da família (criação, edição, desativação/reativação)
+        // Bloqueia cross-tenant e proíbe hard delete
+        allow create, update: if isAdminOfFamily(familyId) &&
+          request.resource.data.familyId == familyId;
+        allow delete: if false; // Preservação de histórico estrita, nunca hard delete
+      }
+
       match /auditLogs/{logId} {
         allow read: if isMemberOfFamily(familyId);
         allow create: if isMemberOfFamily(familyId);
