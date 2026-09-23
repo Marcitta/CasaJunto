@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #5b32a3;
+  --color-brand-primary-hover: #492487;
+  --color-brand-primary-soft: #f3eefa;
+
+  --color-brand-secondary: #d9533f;
+  --color-brand-secondary-hover: #c64330;
+  --color-brand-secondary-soft: #fdf1ee;
+
+  --color-brand-accent: #e5a01a;
+  --color-brand-accent-hover: #c9880f;
+  --color-brand-accent-soft: #fef7e6;
+
+  --color-surface-page: #faf8f5;
+  --color-surface-card: #ffffff;
+  --color-surface-subtle: #f4f0e8;
+  --color-surface-elevated: #ffffff;
+
+  --color-text-primary: #2d2638;
+  --color-text-secondary: #5e5866;
+  --color-text-muted: #8e8796;
+  --color-text-on-primary: #ffffff;
+
+  --color-border-default: #e8e3da;
+  --color-border-strong: #d1c9bc;
+
+  --color-state-success: #168a53;
+  --color-state-success-soft: #ecfdf3;
+  --color-state-warning: #d97706;
+  --color-state-warning-soft: #fffbeb;
+  --color-state-error: #dc2626;
+  --color-state-error-soft: #fef2f2;
+  --color-state-info: #2563eb;
+  --color-state-info-soft: #eff6ff;
+
+  --color-focus-ring: #5b32a3;
+  --color-disabled-background: #ede9e1;
+  --color-disabled-text: #a39c90;
+}
+
+:root {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+
+  /* Semantic Color Tokens (CSS Variables) */
+  --brand-primary: #5b32a3;
+  --brand-primary-hover: #492487;
+  --brand-primary-soft: #f3eefa;
+
+  --brand-secondary: #d9533f;
+  --brand-secondary-hover: #c64330;
+  --brand-secondary-soft: #fdf1ee;
+
+  --brand-accent: #e5a01a;
+  --brand-accent-hover: #c9880f;
+  --brand-accent-soft: #fef7e6;
+
+  --surface-page: #faf8f5;
+  --surface-card: #ffffff;
+  --surface-subtle: #f4f0e8;
+  --surface-elevated: #ffffff;
+
+  --text-primary: #2d2638;
+  --text-secondary: #5e5866;
+  --text-muted: #8e8796;
+  --text-on-primary: #ffffff;
+
+  --border-default: #e8e3da;
+  --border-strong: #d1c9bc;
+
+  --state-success: #168a53;
+  --state-success-soft: #ecfdf3;
+  --state-warning: #d97706;
+  --state-warning-soft: #fffbeb;
+  --state-error: #dc2626;
+  --state-error-soft: #fef2f2;
+  --state-info: #2563eb;
+  --state-info-soft: #eff6ff;
+
+  --focus-ring: #5b32a3;
+  --disabled-background: #ede9e1;
+  --disabled-text: #a39c90;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--surface-page);
+  color: var(--text-primary);
+  overflow-x: hidden;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+

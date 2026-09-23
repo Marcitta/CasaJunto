@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/application",
+    "src/data/demoData.ts",
+    "src/domain",
+    "src/infrastructure/repositories",
+    "src/infrastructure/firebase/mappers.ts",
+    "src/infrastructure/data",
+    "src/infrastructure/index.ts",
+    "src/utils/distributionEngine.ts",
+    "src/tests/adminDashboard.test.ts",
+    "src/tests/adminInvariant.test.ts",
+    "src/tests/adminManagement.test.ts",
+    "src/tests/concurrency.test.ts",
+    "src/tests/distributionRegression.test.ts",
+    "src/tests/taskCatalogBatch.test.ts",
+    "src/tests/runCatalogTests.ts",
+    "src/utils/distributionTests.ts",
+    "src/utils/routineGenerator.ts",
+    "src/utils/validationCenterEngine.ts",
+    "src/components/DistributionTestDashboard.tsx"
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "$schema": "https://firebase.google.com/docs/firestore/blueprint-schema.json",
+  "entities": {
+    "users": {
+      "collection": "users",
+      "description": "User identity and authentication profile (isolated from Family member profile)",
+      "fields": {
+        "id": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Full name / display name" },
+        "photoURL": { "type": "string", "description": "Profile picture URL", "optional": true },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      }
+    },
+    "families": {
+      "collection": "families",
+      "description": "Family tenant root document holding settings and configurations",
+      "fields": {
+        "id": { "type": "string", "description": "Unique Family Tenant ID" },
+        "name": { "type": "string", "description": "Family name" },
+        "ownerUserId": { "type": "string", "description": "User ID of creator/primary owner" },
+        "timezone": { "type": "string", "description": "Timezone e.g. America/Sao_Paulo" },
+        "balance_mode": { "type": "string", "description": "Distribution balance mode" },
+        "active": { "type": "boolean", "description": "Whether family is active" },
+        "environment": { "type": "string", "description": "demo, development or production" },
+        "status": { "type": "string", "description": "ACTIVE or ARCHIVED" },
+        "main_problem": { "type": "string", "description": "Main pain point or challenge", "optional": true },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      }
+    },
+    "familyMemberships": {
+      "collection": "familyMemberships",
+      "description": "Multi-tenant link between a User and a Family with RBAC role",
+      "fields": {
+        "id": { "type": "string", "description": "familyId_userId composite key" },
+        "familyId": { "type": "string", "description": "Tenant Family ID" },
+        "userId": { "type": "string", "description": "Auth User UID" },
+        "memberId": { "type": "string", "description": "Associated Member ID inside family" },
+        "role": { "type": "string", "description": "ADMIN or MEMBER" },
+        "status": { "type": "string", "description": "ACTIVE, INVITED or REMOVED" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      }
+    },
+    "familyInvitations": {
+      "collection": "familyInvitations",
+      "description": "Invitation tokens for joining a family",
+      "fields": {
+        "id": { "type": "string", "description": "Unique invitation ID" },
+        "familyId": { "type": "string", "description": "Target Family ID" },
+        "createdBy": { "type": "string", "description": "User ID who sent the invitation" },
+        "email": { "type": "string", "description": "Invited email address" },
+        "role": { "type": "string", "description": "ADMIN or MEMBER" },
+        "token": { "type": "string", "description": "Secure invitation token" },
+        "status": { "type": "string", "description": "PENDING, ACCEPTED, EXPIRED, CANCELLED" },
+        "expiresAt": { "type": "string", "description": "ISO expiration timestamp" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "acceptedAt": { "type": "string", "description": "ISO acceptance timestamp", "optional": true }
+      }
+    },
+    "members": {
+      "collection": "families/{familyId}/members",
+      "description": "Member profiles inside the family with age and autonomy",
+      "fields": {
+        "id": { "type": "string", "description": "Member ID" },
+        "family_id": { "type": "string", "description": "Parent Family ID" },
+        "user_id": { "type": "string", "description": "Optional linked User ID", "optional": true },
+        "name": { "type": "string", "description": "Member name" },
+        "email": { "type": "string", "description": "Member email", "optional": true },
+        "avatar": { "type": "string", "description": "Avatar initial or icon" },
+        "color": { "type": "string", "description": "Color hex code", "optional": true },
+        "role": { "type": "string", "description": "ADMIN or MEMBER" },
+        "birth_date": { "type": "string", "description": "YYYY-MM-DD" },
+        "age": { "type": "number", "description": "Calculated or entered age" },
+        "autonomy_level": { "type": "number", "description": "1 to 4 autonomy level" },
+        "active": { "type": "boolean", "description": "Active in household tasks" },
+        "max_daily_minutes": { "type": "number", "description": "Maximum safe daily minutes", "optional": true },
+        "blocked_task_ids": { "type": "array", "description": "Blocked task master IDs", "optional": true },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" }
+      }
+    },
+    "assignments": {
+      "collection": "families/{familyId}/assignments",
+      "description": "Daily task assignments generated by Engine 2.0 or manual adjustments",
+      "fields": {
+        "id": { "type": "string", "description": "Assignment ID" },
+        "family_id": { "type": "string", "description": "Family Tenant ID" },
+        "task_id": { "type": "string", "description": "Task Master ID" },
+        "member_id": { "type": "string", "description": "Assigned Member ID" },
+        "scheduled_date": { "type": "string", "description": "YYYY-MM-DD" },
+        "scheduled_start": { "type": "string", "description": "HH:mm start time", "optional": true },
+        "scheduled_end": { "type": "string", "description": "HH:mm end time", "optional": true },
+        "status": { "type": "string", "description": "SCHEDULED, IN_PROGRESS, COMPLETED, SKIPPED, RESCHEDULED, MISSED, CANCELLED" },
+        "score": { "type": "number", "description": "Engine 2.0 calculated score" },
+        "assigned_reason": { "type": "string", "description": "Explainability reason" },
+        "factors": { "type": "object", "description": "Transparent score breakdown", "optional": true },
+        "feedback_difficulty": { "type": "string", "description": "EASY, NORMAL, TIRED, VERY_TIRED", "optional": true },
+        "feedback_at": { "type": "string", "description": "Feedback timestamp", "optional": true },
+        "is_unassigned": { "type": "boolean", "description": "Whether task is unassigned", "optional": true },
+        "unassigned_reason": { "type": "string", "description": "Unassignment cause", "optional": true },
+        "completed_at": { "type": "string", "description": "Completion ISO timestamp", "optional": true },
+        "completion_duration": { "type": "number", "description": "Actual duration in minutes", "optional": true },
+        "rescheduled_count": { "type": "number", "description": "Times rescheduled" },
+        "notes": { "type": "string", "description": "Optional notes", "optional": true },
+        "is_blitz": { "type": "boolean", "description": "Whether created by Blitz Mode", "optional": true },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Last update timestamp" }
+      }
+    },
+    "auditLogs": {
+      "collection": "families/{familyId}/auditLogs",
+      "description": "Immutable audit trail for all operational and administrative actions",
+      "fields": {
+        "id": { "type": "string", "description": "Audit log ID" },
+        "family_id": { "type": "string", "description": "Family Tenant ID" },
+        "actor_user_id": { "type": "string", "description": "User ID who performed action", "optional": true },
+        "action": { "type": "string", "description": "DISTRIBUTION_RUN, TASK_COMPLETED, TASK_RESCHEDULED, REBALANCE_APPLIED, MEMBER_UPDATED, FAMILY_CREATED" },
+        "entity_type": { "type": "string", "description": "ASSIGNMENT, MEMBER, FAMILY, ROUTINE" },
+        "entity_id": { "type": "string", "description": "Target ID" },
+        "details": { "type": "object", "description": "Action details" },
+        "timestamp": { "type": "string", "description": "ISO timestamp" },
+        "created_at": { "type": "string", "description": "ISO creation timestamp" }
+      }
+    },
+    "chaosSessions": {
+      "collection": "families/{familyId}/chaosSessions",
+      "description": "Modo Caos collaborative focus sessions for rapid household reorganization",
+      "fields": {
+        "id": { "type": "string", "description": "Chaos session ID" },
+        "familyId": { "type": "string", "description": "Parent Family Tenant ID" },
+        "createdByMemberId": { "type": "string", "description": "Member ID of creator ADMIN" },
+        "status": { "type": "string", "description": "DRAFT, ACTIVE, COMPLETED, CANCELLED" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "startedAt": { "type": "string", "description": "Session start timestamp", "optional": true },
+        "endedAt": { "type": "string", "description": "Session end timestamp", "optional": true },
+        "initialDurationMinutes": { "type": "number", "description": "Initial duration (15, 30, 45, 60)" },
+        "totalDurationMinutes": { "type": "number", "description": "Total duration in minutes" },
+        "expiresAt": { "type": "string", "description": "Canonical expiration timestamp", "optional": true },
+        "participantMemberIds": { "type": "array", "description": "Participating Member IDs" },
+        "lateParticipantMemberIds": { "type": "array", "description": "Late joiner Member IDs" },
+        "selectedTaskIds": { "type": "array", "description": "Selected TaskAssignment IDs" },
+        "extensions": { "type": "array", "description": "Time extensions applied" },
+        "bonusAwardedMemberIds": { "type": "array", "description": "Member IDs awarded participation bonus" },
+        "bonusPointsPerMember": { "type": "number", "description": "Bonus points (default: 5)" },
+        "updatedAt": { "type": "string", "description": "Last update timestamp" }
+      }
+    },
+    "chaosState": {
+      "collection": "families/{familyId}/chaosState",
+      "description": "Deterministic concurrency lock ensuring maximum 1 ACTIVE ChaosSession per family",
+      "fields": {
+        "id": { "type": "string", "description": "Lock document ID (current)" },
+        "activeSessionId": { "type": "string", "description": "ID of active session or null", "optional": true },
+        "updatedAt": { "type": "string", "description": "Last lock update timestamp" }
+      }
+    }
+  }
+}

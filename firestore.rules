@@ -1,0 +1,327 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function membershipDoc(familyId) {
+      return get(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid));
+    }
+
+    function isMemberOfFamily(familyId) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid));
+    }
+
+    function isAdminOfFamily(familyId) {
+      return isMemberOfFamily(familyId) && membershipDoc(familyId).data.role == 'ADMIN';
+    }
+
+    function callerMemberId(familyId) {
+      return ('memberId' in membershipDoc(familyId).data) ? membershipDoc(familyId).data.memberId : membershipDoc(familyId).data.member_id;
+    }
+
+    function isBootstrapOwnerMember(familyId) {
+      return isAuthenticated() &&
+        (('user_id' in request.resource.data && request.resource.data.user_id == request.auth.uid) ||
+         ('userId' in request.resource.data && request.resource.data.userId == request.auth.uid)) &&
+        request.resource.data.role == 'ADMIN' &&
+        (('family_id' in request.resource.data && request.resource.data.family_id == familyId) ||
+         ('familyId' in request.resource.data && request.resource.data.familyId == familyId)) &&
+        existsAfter(/databases/$(database)/documents/families/$(familyId)) &&
+        getAfter(/databases/$(database)/documents/families/$(familyId)).data.ownerUserId == request.auth.uid &&
+        existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
+        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
+        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
+    }
+
+    // 1. Users collection: user can only read and write their own profile
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isUser(userId);
+      allow delete: if false;
+    }
+
+    // 2. Family Memberships: Top-level links between User and Family
+    match /familyMemberships/{membershipId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.user_id == request.auth.uid ||
+        isMemberOfFamily(resource.data.familyId) ||
+        isMemberOfFamily(resource.data.family_id)
+      );
+      // User can create their initial ADMIN membership when creating a family, or an ADMIN can invite, or via accepted invitation
+      allow create: if isAuthenticated() && (
+        (request.resource.data.userId == request.auth.uid &&
+         request.resource.data.role == 'ADMIN' &&
+         request.resource.data.status == 'ACTIVE' &&
+         existsAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)) &&
+         getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.ownerUserId == request.auth.uid) ||
+        isAdminOfFamily(request.resource.data.familyId) ||
+        // Permitir criação via aceite transacional com convite (validação bidirecional atômica):
+        (
+          membershipId == request.resource.data.familyId + '_' + request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.status == 'ACTIVE' &&
+          request.resource.data.role == getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/members/$(request.resource.data.memberId)).data.role &&
+          getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/invites/$(request.resource.data.memberId)).data.status == 'ACCEPTED' &&
+          getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/invites/$(request.resource.data.memberId)).data.acceptedByUid == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/members/$(request.resource.data.memberId)).data.userId == request.auth.uid
+        )
+      );
+      // Update memberships: ADMIN or self via accepted invitation (without self-promoting or reactivating REMOVED)
+      allow update: if isAuthenticated() && (
+        (isAdminOfFamily(resource.data.familyId) && (
+          request.resource.data.familyId == resource.data.familyId &&
+          request.resource.data.userId == resource.data.userId
+        )) ||
+        (
+          membershipId == resource.data.familyId + '_' + request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.status == 'ACTIVE' &&
+          resource.data.status != 'REMOVED' &&
+          (resource.data.memberId == request.resource.data.memberId || resource.data.memberId == null) &&
+          request.resource.data.role == getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/members/$(request.resource.data.memberId)).data.role &&
+          getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/invites/$(request.resource.data.memberId)).data.status == 'ACCEPTED' &&
+          getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/invites/$(request.resource.data.memberId)).data.acceptedByUid == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/members/$(request.resource.data.memberId)).data.userId == request.auth.uid
+        )
+      );
+      allow delete: if isAuthenticated() && (
+        isAdminOfFamily(resource.data.familyId) ||
+        resource.data.userId == request.auth.uid
+      );
+    }
+
+    // 3. Family Invitations (Global Code Lookup Index)
+    match /familyInvitations/{invitationId} {
+      allow get: if isAuthenticated();
+      allow list: if isAuthenticated() && isMemberOfFamily(resource.data.familyId);
+      allow create: if isAuthenticated() && isAdminOfFamily(request.resource.data.familyId);
+      allow update: if isAuthenticated() && (
+        (isAdminOfFamily(resource.data.familyId) && resource.data.status == 'PENDING' && request.resource.data.status == 'REVOKED') ||
+        (
+          resource.data.status == 'PENDING' &&
+          (resource.data.expiresAt is timestamp ? request.time < resource.data.expiresAt : true) &&
+          request.resource.data.status == 'ACCEPTED' &&
+          request.resource.data.acceptedByUid == request.auth.uid &&
+          request.resource.data.familyId == resource.data.familyId &&
+          request.resource.data.targetMemberId == resource.data.targetMemberId &&
+          getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/members/$(resource.data.targetMemberId)).data.userId == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/invites/$(resource.data.targetMemberId)).data.status == 'ACCEPTED' &&
+          getAfter(/databases/$(database)/documents/familyMemberships/$(resource.data.familyId + '_' + request.auth.uid)).data.status == 'ACTIVE' &&
+          getAfter(/databases/$(database)/documents/familyMemberships/$(resource.data.familyId + '_' + request.auth.uid)).data.memberId == resource.data.targetMemberId
+        )
+      );
+      allow delete: if false;
+    }
+
+    // 4. Families (Root Tenant Document)
+    match /families/{familyId} {
+      allow read: if isMemberOfFamily(familyId);
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerUserId == request.auth.uid &&
+        existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
+        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
+        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
+      allow update: if isAdminOfFamily(familyId);
+      allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
+
+      // Invites subcollection under Family
+      match /invites/{memberId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create: if isAuthenticated() && isAdminOfFamily(familyId);
+        allow update: if isAuthenticated() && (
+          (isAdminOfFamily(familyId) && (
+            (resource.data.status == 'PENDING' && request.resource.data.status == 'REVOKED') ||
+            request.resource.data.status == 'PENDING'
+          )) ||
+          (
+            resource.data.status == 'PENDING' &&
+            (resource.data.expiresAt is timestamp ? request.time < resource.data.expiresAt : true) &&
+            request.resource.data.status == 'ACCEPTED' &&
+            request.resource.data.acceptedByUid == request.auth.uid &&
+            request.resource.data.familyId == familyId &&
+            request.resource.data.targetMemberId == memberId &&
+            getAfter(/databases/$(database)/documents/families/$(familyId)/members/$(memberId)).data.userId == request.auth.uid &&
+            getAfter(/databases/$(database)/documents/familyInvitations/$(resource.data.code)).data.status == 'ACCEPTED' &&
+            getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.status == 'ACTIVE' &&
+            getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.memberId == memberId
+          )
+        );
+        allow delete: if false;
+      }
+
+      // Subcollections under Family
+      match /members/{memberId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create: if isAdminOfFamily(familyId) || isBootstrapOwnerMember(familyId);
+        allow delete: if isAdminOfFamily(familyId);
+        allow update: if isAuthenticated() && (
+          isAdminOfFamily(familyId) ||
+          (
+            isMemberOfFamily(familyId) && (
+              (('userId' in resource.data) && resource.data.userId == request.auth.uid) ||
+              (('user_id' in resource.data) && resource.data.user_id == request.auth.uid) ||
+              (callerMemberId(familyId) == memberId)
+            )
+            && request.resource.data.role == resource.data.role
+            && (request.resource.data.familyId == resource.data.familyId || request.resource.data.family_id == resource.data.family_id)
+            && (!('active' in request.resource.data) || request.resource.data.active == resource.data.active)
+          ) ||
+          // Vínculo transacional de conta via convite aceito (validação bidirecional atômica):
+          (
+            (!('userId' in resource.data) || resource.data.userId == null || resource.data.userId == '') &&
+            (!('user_id' in resource.data) || resource.data.user_id == null || resource.data.user_id == '') &&
+            resource.data.active != false &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['userId', 'email', 'updatedAt']) &&
+            request.resource.data.userId == request.auth.uid &&
+            request.resource.data.role == resource.data.role &&
+            getAfter(/databases/$(database)/documents/families/$(familyId)/invites/$(memberId)).data.status == 'ACCEPTED' &&
+            getAfter(/databases/$(database)/documents/families/$(familyId)/invites/$(memberId)).data.acceptedByUid == request.auth.uid &&
+            (getAfter(/databases/$(database)/documents/families/$(familyId)/invites/$(memberId)).data.expiresAt is timestamp ? request.time < getAfter(/databases/$(database)/documents/families/$(familyId)/invites/$(memberId)).data.expiresAt : true) &&
+            getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.status == 'ACTIVE' &&
+            getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.memberId == memberId
+          )
+        );
+      }
+
+      match /house/{houseId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      match /rooms/{roomId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      match /familyTasks/{familyTaskId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      match /assignments/{assignmentId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create, delete: if isAdminOfFamily(familyId);
+        allow update: if isMemberOfFamily(familyId) && (
+          isAdminOfFamily(familyId) || (
+            // MEMBER defense-in-depth:
+            // 1. Isolamento estrito de tenant
+            request.resource.data.family_id == familyId &&
+            resource.data.family_id == familyId &&
+
+            // 2. Imutabilidade da identidade e metadados estruturais
+            (!('task_id' in resource.data) || request.resource.data.task_id == resource.data.task_id) &&
+            (!('scheduled_date' in resource.data) || request.resource.data.scheduled_date == resource.data.scheduled_date) &&
+            (!('room_id' in resource.data) || request.resource.data.room_id == resource.data.room_id) &&
+
+            // 3. Proibido reverter tarefa COMPLETED
+            resource.data.status != 'COMPLETED' &&
+            resource.data.status != 'DONE' &&
+
+            // 4. Somente transição válida para status COMPLETED
+            (request.resource.data.status == 'COMPLETED' || request.resource.data.status == 'DONE') &&
+            request.resource.data.completed_by == callerMemberId(familyId) &&
+            ('completed_at' in request.resource.data) &&
+
+            // 5. Autorização do responsável (CASO 1 ou CASO 2):
+            (
+              // CASO 1: NORMAL_COMPLETION (Tarefa já atribuída ao próprio morador)
+              (
+                resource.data.member_id == callerMemberId(familyId) &&
+                request.resource.data.member_id == callerMemberId(familyId)
+              ) ||
+              // CASO 2: SELF_CLAIMED (Tarefa unassigned assumida no ato da conclusão)
+              (
+                (
+                  !('is_unassigned' in resource.data) ||
+                  resource.data.is_unassigned == true ||
+                  !('member_id' in resource.data) ||
+                  resource.data.member_id == '' ||
+                  resource.data.member_id == null
+                ) &&
+                request.resource.data.member_id == callerMemberId(familyId)
+              )
+            )
+          )
+        );
+      }
+
+      match /skills/{skillId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      match /preferences/{prefId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isMemberOfFamily(familyId);
+      }
+
+      match /protectedTimes/{timeId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      match /availabilities/{availId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isMemberOfFamily(familyId);
+      }
+
+      match /calendarEvents/{eventId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isMemberOfFamily(familyId);
+      }
+
+      match /householdHelp/{helpId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      match /auditLogs/{logId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create: if isMemberOfFamily(familyId);
+        allow update, delete: if false; // Audit logs are strictly immutable
+      }
+
+      // CHAOS-1A: MODO CAOS — SESSIONS & CONCURRENCY LOCK
+      match /chaosSessions/{sessionId} {
+        // ADMIN can read any session in family.
+        // MEMBER can read only if status == 'ACTIVE' and caller is in participantMemberIds.
+        allow read: if isMemberOfFamily(familyId) && (
+          isAdminOfFamily(familyId) || (
+            resource.data.status == 'ACTIVE' &&
+            callerMemberId(familyId) in resource.data.participantMemberIds
+          )
+        );
+        allow create: if isAdminOfFamily(familyId) &&
+          request.resource.data.status == 'DRAFT' &&
+          request.resource.data.familyId == familyId;
+        allow update: if isAdminOfFamily(familyId) && (
+          // DRAFT -> ACTIVE
+          (resource.data.status == 'DRAFT' && request.resource.data.status == 'ACTIVE') ||
+          // DRAFT -> CANCELLED
+          (resource.data.status == 'DRAFT' && request.resource.data.status == 'CANCELLED') ||
+          // DRAFT update config
+          (resource.data.status == 'DRAFT' && request.resource.data.status == 'DRAFT') ||
+          // ACTIVE -> COMPLETED
+          (resource.data.status == 'ACTIVE' && request.resource.data.status == 'COMPLETED') ||
+          // ACTIVE -> ACTIVE (time extensions, late participants)
+          (resource.data.status == 'ACTIVE' && request.resource.data.status == 'ACTIVE')
+        );
+        allow delete: if false; // Preservação de histórico estrita, nunca hard delete
+      }
+
+      match /chaosState/{stateId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+    }
+  }
+}
