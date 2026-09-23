@@ -13,7 +13,6 @@ import {
   isTaskFromActiveRoutine
 } from '../domain/selectors/todayProgressSelectors';
 import { selectVisibleTodayTasks } from '../domain/rbac/rolePermissions';
-import { CustomTaskRepairBanner } from './Repair/CustomTaskRepairBanner';
 
 export type TodayFilter = 'mine' | 'all' | 'available';
 
@@ -248,9 +247,6 @@ export const TodayView: React.FC<TodayViewProps> = ({
           </span>
         </button>
       </div>
-
-      {/* HOTFIX-TASK-CREATE-1-R2B: Controlled Real Repair Banner for Casa Croce */}
-      <CustomTaskRepairBanner />
 
       {/* Pending Tasks Section */}
       <div id="today-pending-section">

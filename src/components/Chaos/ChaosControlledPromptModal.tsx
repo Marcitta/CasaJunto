@@ -14,7 +14,8 @@ export const ChaosControlledPromptModal: React.FC = () => {
     members,
     family,
     tasks,
-    openChaosModal
+    openChaosModal,
+    reloadAssignments
   } = useApp();
 
   const [liveAssignments, setLiveAssignments] = useState<TaskAssignment[]>([]);
@@ -86,8 +87,13 @@ export const ChaosControlledPromptModal: React.FC = () => {
              ((t as any).family_task_id && (t as any).family_task_id === config.familyTaskId)
       );
 
-      const isCompleted = (liveAsg && (liveAsg.status === 'COMPLETED' || liveAsg.status === 'DONE')) ||
-        (matchingTask ? (matchingTask.status === 'DONE' || (matchingTask.status as string) === 'COMPLETED') : false);
+      // CANONICAL RULE: Utiliza estritamente o predicado canônico de sessão (HF5 / SC1A)
+      // Invariante: ACTIVE VIEW COMPLETED SET = CONTROLLED PROMPT COMPLETED SET = CLOSURE COMPLETED SET
+      const isCompleted = liveAsg
+        ? ChaosSessionService.isAssignmentCompletedInChaosSession(liveAsg, activeChaosSession)
+        : (matchingTask
+            ? ChaosSessionService.isAssignmentCompletedInChaosSession(matchingTask as any, activeChaosSession)
+            : false);
 
       if (isCompleted) {
         completed++;
@@ -164,6 +170,9 @@ export const ChaosControlledPromptModal: React.FC = () => {
         isDemoMode
       });
       setActiveChaosSession(updated);
+      if (reloadAssignments) {
+        await reloadAssignments();
+      }
       openChaosModal();
     } catch (err) {
       console.error('[ChaosControlledPrompt] Falha ao finalizar Modo Caos:', err);

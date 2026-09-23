@@ -24,14 +24,16 @@ export const ChaosSessionModal: React.FC = () => {
     rooms,
     completeTask,
     completeTaskDetailed,
-    syncRollingRoutines
+    syncRollingRoutines,
+    reloadAssignments
   } = useApp();
 
   const isOpen = Boolean(isChaosModalOpen || isBlitzModalOpen);
   const handleClose = useCallback(() => {
     if (setIsChaosModalOpen) setIsChaosModalOpen(false);
     if (setIsBlitzModalOpen) setIsBlitzModalOpen(false);
-  }, [setIsChaosModalOpen, setIsBlitzModalOpen]);
+    if (reloadAssignments) reloadAssignments();
+  }, [setIsChaosModalOpen, setIsBlitzModalOpen, reloadAssignments]);
 
   const isAdmin = Boolean(isDemoMode || currentMember?.role === 'ADMIN');
 
@@ -54,15 +56,24 @@ export const ChaosSessionModal: React.FC = () => {
     if (syncRollingRoutines) {
       await syncRollingRoutines();
     }
+    if (reloadAssignments) {
+      await reloadAssignments();
+    }
   };
 
   const handleTaskComplete = useCallback(async (task: Task) => {
+    let res;
     if (completeTaskDetailed) {
-      return completeTaskDetailed(task.id);
+      res = await completeTaskDetailed(task.id);
+    } else {
+      const ok = await completeTask(task.id);
+      res = { success: ok };
     }
-    const ok = await completeTask(task.id);
-    return { success: ok };
-  }, [completeTask, completeTaskDetailed]);
+    if (res.success && reloadAssignments) {
+      await reloadAssignments();
+    }
+    return res;
+  }, [completeTask, completeTaskDetailed, reloadAssignments]);
 
   if (!isOpen) return null;
 

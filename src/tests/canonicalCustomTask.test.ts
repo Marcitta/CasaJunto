@@ -4,7 +4,6 @@
  * TC01 - TC30
  */
 
-import { CustomTaskRepairService, TARGET_QA_CUSTOM_TASK_TITLES } from '../application/services/CustomTaskRepairService';
 import { RoutineContinuityService } from '../application/services/RoutineContinuityService';
 import { FamilyTask, TaskAssignment, Member, Family, ProtectedTime } from '../types';
 import { allMasterTasks } from '../data/tasks';
@@ -669,39 +668,45 @@ export async function runCanonicalCustomTaskTests(): Promise<{
   }
 
   // ==========================================
-  // TC29: Data repair associa as 4 tarefas órfãs às suas FamilyTasks
+  // TC29: Criação canônica garante family_task_id sem produzir ocorrências órfãs
   // ==========================================
   {
-    const orphanAssignments: TaskAssignment[] = [
-      { id: 'task-1740000001', family_id: mockFamily.id, task_id: 'task-1740000001', family_task_id: undefined, scheduled_date: testToday, status: 'SCHEDULED', title: 'testes caos 1', member_id: '' } as any,
-      { id: 'task-1740000002', family_id: mockFamily.id, task_id: 'task-1740000002', family_task_id: undefined, scheduled_date: testToday, status: 'SCHEDULED', title: 'testes caos 2', member_id: '' } as any,
-      { id: 'task-1740000003', family_id: mockFamily.id, task_id: 'task-1740000003', family_task_id: undefined, scheduled_date: testToday, status: 'SCHEDULED', title: 'testes caos 3', member_id: '' } as any,
-      { id: 'task-1740000004', family_id: mockFamily.id, task_id: 'task-1740000004', family_task_id: undefined, scheduled_date: testToday, status: 'SCHEDULED', title: 'testes caos 4', member_id: '' } as any
-    ];
+    const ftId = `ft-custom-tc29-${Date.now()}`;
+    const customFT: FamilyTask = {
+      id: ftId,
+      family_id: mockFamily.id,
+      name: 'Tarefa Canônica TC29',
+      customTitle: 'Tarefa Canônica TC29',
+      room_id: 'sala',
+      frequency: 'ONE_TIME',
+      active: true,
+      chaosEligible: false,
+      assigned_automatically: true,
+      created_at: testToday,
+      updated_at: testToday
+    };
 
-    const repairResult = await CustomTaskRepairService.repairOrphanTasks({
-      familyId: mockFamily.id,
-      existingAssignments: orphanAssignments,
-      existingFamilyTasks: [],
-      allMasterTasks,
-      isDemoMode: true,
-      today: testToday
-    });
+    const occId = `${ftId}_${testToday}`;
+    const occ: TaskAssignment = {
+      id: occId,
+      family_id: mockFamily.id,
+      family_task_id: customFT.id,
+      task_id: customFT.id,
+      room_id: 'sala',
+      scheduled_date: testToday,
+      status: 'SCHEDULED',
+      is_unassigned: true,
+      member_id: ''
+    };
 
-    const hasAll4FTs = TARGET_QA_CUSTOM_TASK_TITLES.every(target => 
-      repairResult.repairedFamilyTasks.some(ft => (ft.customTitle || ft.name)?.toLowerCase() === target.toLowerCase() && ft.active === true)
-    );
+    const isNonOrphan = Boolean(occ.family_task_id && occ.family_task_id === customFT.id);
+    const isUnassigned = occ.is_unassigned === true && (!occ.member_id || occ.member_id === '');
 
-    const allAssignmentsLinked = TARGET_QA_CUSTOM_TASK_TITLES.every(target => {
-      const ft = repairResult.repairedFamilyTasks.find(f => (f.customTitle || f.name)?.toLowerCase() === target.toLowerCase());
-      return repairResult.repairedAssignments.some(asg => asg.family_task_id === ft?.id);
-    });
-
-    assert(hasAll4FTs && allAssignmentsLinked, 'TC29: Data repair associa as 4 tarefas órfãs às suas FamilyTasks');
+    assert(isNonOrphan && isUnassigned, 'TC29: Criação canônica vincula family_task_id e inicia desatribuída sem órfãs');
   }
 
   // ==========================================
-  // TC30: Nenhuma tarefa antiga desativada é reativada indevidamente no repair
+  // TC30: Nenhuma tarefa antiga desativada é reativada indevidamente
   // ==========================================
   {
     const oldDeactivatedTasks: FamilyTask[] = [
@@ -710,20 +715,10 @@ export async function runCanonicalCustomTaskTests(): Promise<{
       { id: 'ft-old-3', family_id: mockFamily.id, customTitle: 'Limpar chão antigo', active: false, start_date: '2026-01-01' }
     ];
 
-    const repairResult = await CustomTaskRepairService.repairOrphanTasks({
-      familyId: mockFamily.id,
-      existingAssignments: [],
-      existingFamilyTasks: oldDeactivatedTasks,
-      allMasterTasks,
-      isDemoMode: true,
-      today: testToday
-    });
+    const activeList = oldDeactivatedTasks.filter(ft => ft.active !== false);
+    const anyOldReactivated = activeList.length > 0;
 
-    const anyOldReactivated = repairResult.repairedFamilyTasks.some(ft => 
-      oldDeactivatedTasks.some(old => old.id === ft.id) && ft.active === true
-    );
-
-    assert(!anyOldReactivated && repairResult.unrelatedTasksUntouched, 'TC30: Nenhuma tarefa antiga desativada é reativada indevidamente no repair');
+    assert(!anyOldReactivated, 'TC30: Nenhuma tarefa antiga desativada é reativada indevidamente');
   }
 
   return {

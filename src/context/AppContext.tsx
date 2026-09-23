@@ -15,7 +15,8 @@ import {
   BatchAddResult,
   BatchDeactivateResult,
   ChaosSession,
-  CompletionType
+  CompletionType,
+  TaskMaster
 } from '../types';
 import { ChaosSessionService } from '../services/chaosSessionService';
 import { 
@@ -39,7 +40,6 @@ import { RebalanceResult, SafetyService } from '../domain/distribution';
 import { allMasterTasks } from '../data/tasks';
 import { isValidRoomType, ROOM_TYPE_OPTIONS } from '../data/roomTypes';
 import { TaskCompletionService } from '../application/services/TaskCompletionService';
-import { CustomTaskRepairService } from '../application/services/CustomTaskRepairService';
 import { getDayOfWeek } from '../domain/utils/dateTimeUtils';
 import { 
   getActiveMembers, 
@@ -148,6 +148,74 @@ export interface AppContextType {
   activeChaosSession?: ChaosSession | null;
   loadActiveChaosSession?: () => Promise<ChaosSession | null>;
   setActiveChaosSession?: React.Dispatch<React.SetStateAction<ChaosSession | null>>;
+  reloadAssignments?: () => Promise<void>;
+}
+
+/**
+ * Mapeador canônico único de TaskAssignment -> Task (utilizado por loadRealAssignments e reloadAssignments).
+ * Garante idempotência, resolução de Master/FamilyTask e de-duplicação canônica por chave temporal.
+ */
+export function mapAssignmentsToTasks(params: {
+  assignments: TaskAssignment[];
+  rooms: Room[];
+  familyTasks: FamilyTask[];
+  allMasterTasks: TaskMaster[];
+}): Task[] {
+  const { assignments, rooms, familyTasks, allMasterTasks } = params;
+  const list: Task[] = [];
+  const seenCanonicalKeys = new Set<string>();
+
+  assignments.forEach(asg => {
+    const master = allMasterTasks.find(tm => tm.id === asg.task_id);
+    const roomObj = rooms.find(r => r.id === asg.room_id);
+    const fallbackRoomType = master?.room_type || 'geral';
+    const ft = familyTasks.find(f => f.id === asg.family_task_id || f.id === (asg as any).familyTaskId);
+    const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
+    const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
+
+    // HOTFIX-DUP-1: Proteção canônica de hidratação no AppContext (sem dedupe por título)
+    const canonicalKey = (asg.task_id && asg.scheduled_date) 
+      ? `${asg.task_id}_${asg.scheduled_date}` 
+      : (asg.family_task_id && asg.scheduled_date ? `${asg.family_task_id}_${asg.scheduled_date}` : asg.id);
+    
+    if (seenCanonicalKeys.has(canonicalKey)) {
+      return;
+    }
+    seenCanonicalKeys.add(canonicalKey);
+
+    list.push({
+      id: asg.id,
+      familyId: asg.family_id,
+      title: displayTitle,
+      description: displayDescription,
+      taskMasterId: asg.task_id,
+      familyTaskId: asg.family_task_id,
+      assignedMemberId: asg.is_unassigned ? '' : asg.member_id,
+      assigneeId: asg.is_unassigned ? '' : asg.member_id,
+      status: asg.status === 'COMPLETED' ? 'DONE' : (asg.status === 'CANCELLED' ? 'CANCELLED' : 'PENDING'),
+      dueDate: asg.scheduled_date || getTodayDateString(),
+      scheduledStart: asg.scheduled_start,
+      scheduledEnd: asg.scheduled_end,
+      assignedReason: asg.assigned_reason,
+      unassignedReason: asg.unassigned_reason,
+      isUnassigned: asg.is_unassigned,
+      factors: asg.factors,
+      frequency: 'DAILY',
+      effort: master?.effort_level ? master.effort_level * 5 : 10,
+      durationMinutes: master?.duration_minutes || 20,
+      category: master?.category || 'cleaning',
+      roomId: asg.room_id || fallbackRoomType,
+      roomName: roomObj?.name || fallbackRoomType,
+      completedAt: asg.completed_at,
+      completedByMemberId: asg.completed_by,
+      completedByName: asg.completed_by_name,
+      completionType: asg.completion_type,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  });
+
+  return list;
 }
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -227,6 +295,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return null;
     }
   };
+
+  /**
+   * Recarregamento canônico de ocorrências (assignments) do Firestore para o AppContext.
+   * - Restrito estritamente à família ativa atual.
+   * - Em modo DEMO, não executa leitura indevida no Firestore.
+   * - Protegido contra race conditions e troca de família (descarta leitura se família mudar).
+   * - Reutiliza mapAssignmentsToTasks garantindo estrita paridade com loadRealAssignments.
+   */
+  const reloadAssignments = useCallback(async (): Promise<void> => {
+    if (isDemoMode) {
+      return;
+    }
+    const currentFamId = authFamily?.id || family?.id;
+    if (!currentFamId || currentFamId === 'fam-demo' || !db) {
+      return;
+    }
+
+    try {
+      const asgRef = collection(db, 'families', currentFamId, 'assignments');
+      const snap = await getDocs(asgRef);
+
+      // Proteção contra concorrência e troca de família (multi-tenant isolation):
+      // Se a família ativa mudou enquanto a requisição estava em trânsito, descarta o resultado
+      const activeFamId = authFamily?.id || family?.id;
+      if (activeFamId !== currentFamId) {
+        return;
+      }
+
+      const rawAssignments: TaskAssignment[] = [];
+      snap.forEach(d => {
+        rawAssignments.push(FirestoreMappers.toTaskAssignment(d.id, d.data()));
+      });
+
+      const activeFTs = familyTasks;
+      let syncedAssignments = rawAssignments;
+      if (activeFTs.length > 0 && authFamily) {
+        try {
+          const syncResult = await RoutineContinuityService.syncRoutineOccurrences({
+            family: authFamily,
+            routines: activeFTs,
+            existingAssignments: rawAssignments,
+            isDemoMode: false
+          });
+          syncedAssignments = syncResult.allAssignments;
+        } catch (syncErr) {
+          console.warn('[AppContext.reloadAssignments] syncRoutineOccurrences error:', syncErr);
+        }
+      }
+
+      const list = mapAssignmentsToTasks({
+        assignments: syncedAssignments,
+        rooms,
+        familyTasks: activeFTs,
+        allMasterTasks
+      });
+
+      setTasks(list);
+    } catch (err) {
+      console.warn('[AppContext.reloadAssignments] Falha ao recarregar assignments:', err);
+    }
+  }, [isDemoMode, authFamily, family?.id, familyTasks, rooms]);
 
   useEffect(() => {
     let isMounted = true;
@@ -448,58 +577,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           }
 
-          const list: Task[] = [];
-          const seenCanonicalKeys = new Set<string>();
-
-          syncedAssignments.forEach(asg => {
-            const master = allMasterTasks.find(tm => tm.id === asg.task_id);
-            const roomObj = currentRooms.find(r => r.id === asg.room_id);
-            const fallbackRoomType = master?.room_type || 'geral';
-            const ft = activeFTs.find(f => f.id === asg.family_task_id || f.id === (asg as any).familyTaskId);
-            const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
-            const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
-
-            // HOTFIX-DUP-1: Proteção canônica de hidratação no AppContext (sem dedupe por título)
-            const canonicalKey = (asg.task_id && asg.scheduled_date) 
-              ? `${asg.task_id}_${asg.scheduled_date}` 
-              : (asg.family_task_id && asg.scheduled_date ? `${asg.family_task_id}_${asg.scheduled_date}` : asg.id);
-            
-            if (seenCanonicalKeys.has(canonicalKey)) {
-              return;
-            }
-            seenCanonicalKeys.add(canonicalKey);
-
-            list.push({
-              id: asg.id,
-              familyId: asg.family_id,
-              title: displayTitle,
-              description: displayDescription,
-              taskMasterId: asg.task_id,
-              familyTaskId: asg.family_task_id,
-              assignedMemberId: asg.is_unassigned ? '' : asg.member_id,
-              assigneeId: asg.is_unassigned ? '' : asg.member_id,
-              status: asg.status === 'COMPLETED' ? 'DONE' : (asg.status === 'CANCELLED' ? 'CANCELLED' : 'PENDING'),
-              dueDate: asg.scheduled_date || getTodayDateString(),
-              scheduledStart: asg.scheduled_start,
-              scheduledEnd: asg.scheduled_end,
-              assignedReason: asg.assigned_reason,
-              unassignedReason: asg.unassigned_reason,
-              isUnassigned: asg.is_unassigned,
-              factors: asg.factors,
-              frequency: 'DAILY',
-              effort: master?.effort_level ? master.effort_level * 5 : 10,
-              durationMinutes: master?.duration_minutes || 20,
-              category: master?.category || 'cleaning',
-              roomId: asg.room_id || fallbackRoomType,
-              roomName: roomObj?.name || fallbackRoomType,
-              completedAt: asg.completed_at,
-              completedByMemberId: asg.completed_by,
-              completedByName: asg.completed_by_name,
-              completionType: asg.completion_type,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            });
+          const list = mapAssignmentsToTasks({
+            assignments: syncedAssignments,
+            rooms: currentRooms,
+            familyTasks: activeFTs,
+            allMasterTasks
           });
+
           setTasks(list);
         } catch (err) {
           console.warn('Could not load assignments from Firestore:', err);
@@ -2277,7 +2361,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignTaskManually,
         activeChaosSession,
         loadActiveChaosSession,
-        setActiveChaosSession
+        setActiveChaosSession,
+        reloadAssignments
       }}
     >
       {children}

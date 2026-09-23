@@ -40,12 +40,11 @@ import { runChaosSession1dHf3TestSuite } from './chaosSession1dHf3.test';
 import { runCanonicalCustomTaskTests } from './canonicalCustomTask.test';
 import { runFamilyLoadErrorTestSuite } from './familyLoadError.test';
 import { runSecurityRecoveryRulesTestSuite } from './securityRecoveryRules.test';
-import { runCustomTaskRepairR2TestSuite } from './customTaskRepairR2.test';
-import { runCustomTaskRepairR2BTestSuite } from './customTaskRepairR2B.test';
 import { runRoutineDecouplingR2DTestSuite } from './routineDecouplingR2D.test';
 import { runChaosSession1dHf4TestSuite } from './chaosSession1dHf4.test';
 import { runChaosSession1dHf4R3TestSuite } from './chaosSession1dHf4R3.test';
 import { runChaosSession1dHf5TestSuite } from './chaosSession1dHf5.test';
+import { runStabilizationCloseout1aTestSuite } from './stabilizationCloseout1a.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -601,35 +600,7 @@ for (const r of secRecResults) {
   }
 }
 
-// 43. HOTFIX-TASK-CREATE-1-R2: Custom Task Canonical Repair & Catalog Visibility (20 TESTES: TC-R2-01 - TC-R2-20)
-console.log('\n--- GRUPO 43: HOTFIX-TASK-CREATE-1-R2 (CUSTOM TASK CANONICAL REPAIR & CATALOG VISIBILITY - TC-R2-01 - TC-R2-20) ---');
-const r2Results = await runCustomTaskRepairR2TestSuite();
-for (const r of r2Results) {
-  totalTests++;
-  if (r.passed) {
-    totalPassed++;
-    console.log(`[✓ PASS] CustomTaskR2 ${r.id}: ${r.name}`);
-  } else {
-    totalFailed++;
-    console.log(`[✗ FAIL] CustomTaskR2 ${r.id}: ${r.name} - ${r.error || ''}`);
-  }
-}
-
-// 44. HOTFIX-TASK-CREATE-1-R2B: One-Time Real Firestore Custom Task Repair (14 TESTES: TC-R2B-01 - TC-R2B-14)
-console.log('\n--- GRUPO 44: HOTFIX-TASK-CREATE-1-R2B (ONE-TIME REAL FIRESTORE REPAIR - TC-R2B-01 - TC-R2B-14) ---');
-const r2bResults = await runCustomTaskRepairR2BTestSuite();
-for (const r of r2bResults) {
-  totalTests++;
-  if (r.passed) {
-    totalPassed++;
-    console.log(`[✓ PASS] CustomTaskR2B ${r.id}: ${r.name}`);
-  } else {
-    totalFailed++;
-    console.log(`[✗ FAIL] CustomTaskR2B ${r.id}: ${r.name} - ${r.error || ''}`);
-  }
-}
-
-// 45. HOTFIX-TASK-CREATE-1-R2D: Routine Generation & Distribution Decoupling (20 TESTES: TC-R2D-01 - TC-R2D-20)
+// 43. HOTFIX-TASK-CREATE-1-R2D: Routine Generation & Distribution Decoupling (20 TESTES: TC-R2D-01 - TC-R2D-20)
 console.log('\n--- GRUPO 45: HOTFIX-TASK-CREATE-1-R2D (ROUTINE DECOUPLING - TC-R2D-01 - TC-R2D-20) ---');
 const r2dResults = await runRoutineDecouplingR2DTestSuite();
 for (const r of r2dResults) {
@@ -679,6 +650,19 @@ for (const r of hf5Results) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] Chaos1D-HF5 ${r.id}: ${r.name} - ${r.error || ''} [Expected: ${JSON.stringify(r.expected)}, Actual: ${JSON.stringify(r.actual)}]`);
+  }
+}
+
+console.log('\n--- GRUPO 49: STABILIZATION-CLOSEOUT-1A (CANONICAL ASSIGNMENT RELOAD & SCOPED COMPLETION - SC1A-01 - SC1A-18) ---');
+const sc1aResults = await runStabilizationCloseout1aTestSuite();
+for (const r of sc1aResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] Stabilization1A ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] Stabilization1A ${r.id}: ${r.name} - ${r.error || ''}`);
   }
 }
 
