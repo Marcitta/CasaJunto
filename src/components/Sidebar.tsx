@@ -133,7 +133,7 @@ export const Sidebar: React.FC = () => {
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         {navItems.filter(item => isDemoMode || canAccessTab(currentMember?.role, item.id)).map(item => {
           const Icon = item.icon;
-          const isActive = currentView === item.id;
+          const isActive = currentView === item.id || (item.id === 'dashboard' && currentView === 'domestic_support');
           return (
             <button
               key={item.id}

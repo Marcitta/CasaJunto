@@ -13,7 +13,8 @@ import {
   LogOut, 
   SlidersHorizontal,
   ChevronRight,
-  User
+  User,
+  Sparkles
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
@@ -244,6 +245,22 @@ export const MobileBottomNav: React.FC = () => {
                       <span className="flex items-center gap-3">
                         <ShieldAlert className="w-4 h-4 text-brand-primary" />
                         <span>Painel de Gestão (Admin)</span>
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-text-muted" />
+                    </button>
+
+                    <button
+                      id="mobile-more-domestic-support"
+                      onClick={() => handleSelectView('domestic_support')}
+                      className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
+                        currentView === 'domestic_support'
+                          ? 'bg-brand-primary-soft text-brand-primary font-bold'
+                          : 'text-text-primary hover:bg-surface-subtle'
+                      }`}
+                    >
+                      <span className="flex items-center gap-3">
+                        <Sparkles className="w-4 h-4 text-brand-primary" />
+                        <span>Ajuda Externa (Diarista)</span>
                       </span>
                       <ChevronRight className="w-4 h-4 text-text-muted" />
                     </button>

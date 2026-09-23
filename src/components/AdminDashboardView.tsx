@@ -1,15 +1,16 @@
 import React from 'react';
-import { ShieldCheck, Users, SlidersHorizontal, Settings, Key, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Users, SlidersHorizontal, Settings, Key, AlertTriangle, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 
 export const AdminDashboardView: React.FC = () => {
-  const { family, members, activeMembers, setIsRebalanceModalOpen } = useApp();
+  const { family, members, activeMembers, setIsRebalanceModalOpen, setCurrentView, domesticSupports } = useApp();
   const { currentMembership, isDemoMode } = useAuth();
 
   const operationalMembers = activeMembers && activeMembers.length > 0 ? activeMembers : members.filter(m => m.active !== false);
   const admins = operationalMembers.filter(m => m.role === 'ADMIN');
   const nonAdmins = operationalMembers.filter(m => m.role === 'MEMBER');
+  const activeSupportsCount = (domesticSupports || []).filter(s => s.active !== false).length;
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -50,6 +51,38 @@ export const AdminDashboardView: React.FC = () => {
             Garante que a casa nunca fique sem gestores nem tenha governança fragmentada.
           </p>
         </div>
+
+        {/* Card 3: Ajuda Externa (Diarista) */}
+        <div className="p-5 rounded-2xl bg-surface-card border border-border-default shadow-2xs space-y-3 sm:col-span-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-bold text-brand-primary">
+              <Sparkles className="w-4 h-4" />
+              <span>Ajuda Externa (Diarista)</span>
+            </div>
+            {activeSupportsCount > 0 ? (
+              <span className="text-[10px] font-bold text-state-success bg-state-success-soft px-2 py-0.5 rounded border border-state-success/30">
+                {activeSupportsCount} ativa{activeSupportsCount > 1 ? 's' : ''}
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium text-text-muted bg-surface-subtle px-2 py-0.5 rounded border border-border-default">
+                Nenhuma cadastrada
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-text-secondary leading-relaxed">
+            Organize quem ajuda nos cuidados da casa com horários e rotinas semanais.
+          </p>
+          <div className="pt-1">
+            <button
+              id="btn-goto-domestic-support"
+              onClick={() => setCurrentView('domestic_support')}
+              className="px-4 py-2.5 rounded-xl bg-brand-primary text-text-on-primary hover:bg-brand-primary/90 text-xs font-bold inline-flex items-center gap-2 transition cursor-pointer min-h-[44px]"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Gerenciar ajuda externa</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Admin Action Tools */}
@@ -60,10 +93,18 @@ export const AdminDashboardView: React.FC = () => {
         <div className="flex flex-wrap gap-3">
           <button
             onClick={() => setIsRebalanceModalOpen(true)}
-            className="px-4 py-2 rounded-xl bg-brand-primary-soft hover:bg-brand-primary-soft/80 text-xs font-bold text-brand-primary flex items-center gap-2 transition cursor-pointer"
+            className="px-4 py-2 rounded-xl bg-brand-primary-soft hover:bg-brand-primary-soft/80 text-xs font-bold text-brand-primary flex items-center gap-2 transition cursor-pointer min-h-[44px]"
           >
             <SlidersHorizontal className="w-4 h-4" />
             <span>Rebalanceamento de Carga Automático</span>
+          </button>
+          <button
+            id="btn-quick-domestic-support"
+            onClick={() => setCurrentView('domestic_support')}
+            className="px-4 py-2 rounded-xl bg-brand-primary-soft hover:bg-brand-primary-soft/80 text-xs font-bold text-brand-primary flex items-center gap-2 transition cursor-pointer min-h-[44px]"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Ajuda Externa (Diarista)</span>
           </button>
         </div>
       </div>

@@ -12,6 +12,7 @@ import { HouseView } from './components/HouseView';
 import { TaskCatalogView } from './components/TaskCatalogView';
 import { StatsView } from './components/StatsView';
 import { AdminDashboardView } from './components/AdminDashboardView';
+import { DomesticSupportView } from './components/DomesticSupport/DomesticSupportView';
 import { TaskExecutionModal } from './components/TaskExecutionModal';
 import { RescheduleModal } from './components/RescheduleModal';
 import { ChaosSessionModal } from './components/Chaos/ChaosSessionModal';
@@ -180,6 +181,7 @@ const AppContent: React.FC = () => {
             {currentView === 'catalog' && isAdmin && <TaskCatalogView />}
             {currentView === 'stats' && <StatsView />}
             {currentView === 'dashboard' && isAdmin && <AdminDashboardView />}
+            {currentView === 'domestic_support' && isAdmin && <DomesticSupportView />}
           </main>
         </div>
 

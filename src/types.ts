@@ -8,6 +8,7 @@ export type AppView =
   | 'catalog' 
   | 'stats' 
   | 'dashboard' 
+  | 'domestic_support'
   | 'blitz';
 
 export type TaskFrequency = 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'ONCE' | 'ONE_TIME';

@@ -1,6 +1,6 @@
 import { Task, UserRole } from '../../types';
 
-export const ADMIN_ONLY_VIEWS = ['family', 'house', 'catalog', 'dashboard'] as const;
+export const ADMIN_ONLY_VIEWS = ['family', 'house', 'catalog', 'dashboard', 'domestic_support'] as const;
 export const ALLOWED_MEMBER_VIEWS = ['today', 'routine', 'stats'] as const;
 
 /**

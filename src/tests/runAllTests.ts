@@ -46,6 +46,7 @@ import { runChaosSession1dHf4R3TestSuite } from './chaosSession1dHf4R3.test';
 import { runChaosSession1dHf5TestSuite } from './chaosSession1dHf5.test';
 import { runStabilizationCloseout1aTestSuite } from './stabilizationCloseout1a.test';
 import { runDomesticSupport1aTestSuite } from './domesticSupport1a.test';
+import { runDomesticSupport1bTestSuite } from './domesticSupport1b.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -683,6 +684,20 @@ for (const r of ds1aResults) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] DomesticSupport1A ${r.id}: ${r.name} - ${r.error || ''}`);
+  }
+}
+
+// 49. DOMESTIC-SUPPORT-1B: Gestão da Ajuda Externa — ADMIN UX (25 TESTES: DS1B-01 - DS1B-25)
+console.log('\n--- GRUPO 49: DOMESTIC-SUPPORT-1B (GESTÃO DA AJUDA EXTERNA - ADMIN UX - DS1B-01 - DS1B-25) ---');
+const ds1bResults = await runDomesticSupport1bTestSuite();
+for (const r of ds1bResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] DomesticSupport1B ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] DomesticSupport1B ${r.id}: ${r.name} - ${r.error || ''}`);
   }
 }
 

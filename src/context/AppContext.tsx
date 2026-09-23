@@ -16,8 +16,18 @@ import {
   BatchDeactivateResult,
   ChaosSession,
   CompletionType,
-  TaskMaster
+  TaskMaster,
+  DomesticSupport,
+  DomesticSupportSchedule,
+  DomesticSupportType
 } from '../types';
+import {
+  DomesticSupportService,
+  createDomesticSupportEntity,
+  deactivateDomesticSupportEntity,
+  reactivateDomesticSupportEntity,
+  validateDomesticSupportSchedule
+} from '../services/domesticSupportService';
 import { ChaosSessionService } from '../services/chaosSessionService';
 import { 
   DEMO_FAMILY, 
@@ -149,6 +159,14 @@ export interface AppContextType {
   loadActiveChaosSession?: () => Promise<ChaosSession | null>;
   setActiveChaosSession?: React.Dispatch<React.SetStateAction<ChaosSession | null>>;
   reloadAssignments?: () => Promise<void>;
+  domesticSupports?: DomesticSupport[];
+  isDomesticSupportLoading?: boolean;
+  domesticSupportError?: string | null;
+  loadDomesticSupports?: (familyId?: string) => Promise<DomesticSupport[]>;
+  addDomesticSupport?: (input: { name: string; type?: DomesticSupportType; schedule: DomesticSupportSchedule[] }) => Promise<DomesticSupport>;
+  updateDomesticSupport?: (id: string, updates: { name: string; schedule: DomesticSupportSchedule[] }) => Promise<DomesticSupport>;
+  deactivateDomesticSupport?: (id: string) => Promise<DomesticSupport>;
+  reactivateDomesticSupport?: (id: string) => Promise<DomesticSupport>;
 }
 
 /**
@@ -277,6 +295,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isRebalanceModalOpen, setIsRebalanceModalOpen] = useState(false);
   const [activeChaosSession, setActiveChaosSession] = useState<ChaosSession | null>(null);
 
+  const [domesticSupports, setDomesticSupports] = useState<DomesticSupport[]>([]);
+  const [isDomesticSupportLoading, setIsDomesticSupportLoading] = useState<boolean>(false);
+  const [domesticSupportError, setDomesticSupportError] = useState<string | null>(null);
+
   const loadActiveChaosSession = async (): Promise<ChaosSession | null> => {
     if (isDemoMode) {
       return activeChaosSession || null;
@@ -385,8 +407,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setMembers([]);
       setProtectedTimes([]);
       setRooms([]);
+      setDomesticSupports([]);
+      setIsDomesticSupportLoading(true);
+      setDomesticSupportError(null);
       setFamily(authFamily);
       setCloudSyncStatus('synced');
+
+      // Fetch domestic supports for current family
+      DomesticSupportService.getSupports(authFamily.id)
+        .then(list => {
+          if (isMounted && activeFamilyIdRef.current === authFamily.id) {
+            setDomesticSupports(list);
+            setIsDomesticSupportLoading(false);
+          }
+        })
+        .catch(err => {
+          if (isMounted) {
+            console.warn('[AppContext] Falha ao carregar ajuda externa:', err);
+            setIsDomesticSupportLoading(false);
+            setDomesticSupportError('Não foi possível carregar as informações de ajuda externa da casa.');
+          }
+        });
 
       // Fetch members from Firestore subcollection /families/{familyId}/members
       const loadRealMembers = async () => {
@@ -623,6 +664,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setProtectedTimes([]);
       setRooms([]);
       setTasks([]);
+      setDomesticSupports([]);
+      setIsDomesticSupportLoading(false);
+      setDomesticSupportError(null);
       setActiveChaosSession(null);
     }
 
@@ -646,6 +690,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRooms(DEMO_ROOMS);
     setTasks(DEMO_TASKS);
     setFamilyTasks(demoFamilyTasks);
+    setDomesticSupports([]);
+    setIsDomesticSupportLoading(false);
+    setDomesticSupportError(null);
     setActiveChaosSession(null);
     setCloudSyncStatus('demo');
   };
@@ -2266,6 +2313,190 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { deactivated: deactivatedCount, failed };
   };
 
+  const loadDomesticSupports = useCallback(async (targetFamilyId?: string): Promise<DomesticSupport[]> => {
+    const famId = targetFamilyId || authFamily?.id;
+    if (isDemoMode || !famId) {
+      return domesticSupports;
+    }
+    setIsDomesticSupportLoading(true);
+    setDomesticSupportError(null);
+    try {
+      const list = await DomesticSupportService.getSupports(famId);
+      setDomesticSupports(list);
+      setIsDomesticSupportLoading(false);
+      return list;
+    } catch (err) {
+      console.warn('[AppContext] Erro ao recarregar ajuda externa:', err);
+      setIsDomesticSupportLoading(false);
+      setDomesticSupportError('Não foi possível carregar os dados de ajuda externa.');
+      return domesticSupports;
+    }
+  }, [authFamily?.id, isDemoMode, domesticSupports]);
+
+  const addDomesticSupport = useCallback(async (input: {
+    name: string;
+    type?: DomesticSupportType;
+    schedule: DomesticSupportSchedule[];
+  }): Promise<DomesticSupport> => {
+    const callerRole = currentMember?.role || (isDemoMode ? 'ADMIN' : 'MEMBER');
+    if (callerRole !== 'ADMIN' && !isDemoMode) {
+      throw new Error('Apenas administradores podem cadastrar ajuda externa.');
+    }
+
+    const trimmedName = input.name.trim();
+    if (!trimmedName) {
+      throw new Error('Informe o nome da pessoa de apoio.');
+    }
+
+    const validation = validateDomesticSupportSchedule(input.schedule || []);
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Horários inválidos.');
+    }
+
+    if (isDemoMode) {
+      const newEntity = createDomesticSupportEntity({
+        familyId: family.id || 'demo-family',
+        name: trimmedName,
+        type: input.type || 'CLEANER',
+        schedule: input.schedule
+      });
+      setDomesticSupports(prev => [...prev, newEntity]);
+      return newEntity;
+    }
+
+    if (!authFamily?.id) {
+      throw new Error('Nenhuma residência ativa selecionada.');
+    }
+
+    const newEntity = createDomesticSupportEntity({
+      familyId: authFamily.id,
+      name: trimmedName,
+      type: input.type || 'CLEANER',
+      schedule: input.schedule
+    });
+
+    try {
+      const saved = await DomesticSupportService.saveSupport(authFamily.id, newEntity, 'ADMIN');
+      setDomesticSupports(prev => [...prev, saved]);
+      return saved;
+    } catch (err: any) {
+      console.error('[AppContext] Erro ao cadastrar ajuda externa:', err);
+      throw new Error('Não foi possível salvar o cadastro. Tente novamente.');
+    }
+  }, [currentMember?.role, isDemoMode, family.id, authFamily?.id]);
+
+  const updateDomesticSupport = useCallback(async (
+    id: string,
+    updates: { name: string; schedule: DomesticSupportSchedule[] }
+  ): Promise<DomesticSupport> => {
+    const callerRole = currentMember?.role || (isDemoMode ? 'ADMIN' : 'MEMBER');
+    if (callerRole !== 'ADMIN' && !isDemoMode) {
+      throw new Error('Apenas administradores podem editar ajuda externa.');
+    }
+
+    const trimmedName = updates.name.trim();
+    if (!trimmedName) {
+      throw new Error('Informe o nome da pessoa de apoio.');
+    }
+
+    const validation = validateDomesticSupportSchedule(updates.schedule || []);
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Horários inválidos.');
+    }
+
+    const existing = domesticSupports.find(s => s.id === id);
+    if (!existing) {
+      throw new Error('Registro de ajuda externa não encontrado.');
+    }
+
+    const updatedEntity: DomesticSupport = {
+      ...existing,
+      name: trimmedName,
+      schedule: updates.schedule,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (isDemoMode) {
+      setDomesticSupports(prev => prev.map(s => s.id === id ? updatedEntity : s));
+      return updatedEntity;
+    }
+
+    if (!authFamily?.id) {
+      throw new Error('Nenhuma residência ativa selecionada.');
+    }
+
+    try {
+      const saved = await DomesticSupportService.saveSupport(authFamily.id, updatedEntity, 'ADMIN');
+      setDomesticSupports(prev => prev.map(s => s.id === id ? saved : s));
+      return saved;
+    } catch (err: any) {
+      console.error('[AppContext] Erro ao atualizar ajuda externa:', err);
+      throw new Error('Não foi possível atualizar o cadastro. Tente novamente.');
+    }
+  }, [currentMember?.role, isDemoMode, domesticSupports, authFamily?.id]);
+
+  const deactivateDomesticSupport = useCallback(async (id: string): Promise<DomesticSupport> => {
+    const callerRole = currentMember?.role || (isDemoMode ? 'ADMIN' : 'MEMBER');
+    if (callerRole !== 'ADMIN' && !isDemoMode) {
+      throw new Error('Apenas administradores podem desativar ajuda externa.');
+    }
+
+    const existing = domesticSupports.find(s => s.id === id);
+    if (!existing) {
+      throw new Error('Registro de ajuda externa não encontrado.');
+    }
+
+    if (isDemoMode) {
+      const deactivated = deactivateDomesticSupportEntity(existing);
+      setDomesticSupports(prev => prev.map(s => s.id === id ? deactivated : s));
+      return deactivated;
+    }
+
+    if (!authFamily?.id) {
+      throw new Error('Nenhuma residência ativa selecionada.');
+    }
+
+    try {
+      const deactivated = await DomesticSupportService.deactivateSupport(authFamily.id, id, 'ADMIN');
+      setDomesticSupports(prev => prev.map(s => s.id === id ? deactivated : s));
+      return deactivated;
+    } catch (err: any) {
+      console.error('[AppContext] Erro ao desativar ajuda externa:', err);
+      throw new Error('Não foi possível desativar a ajuda externa. Tente novamente.');
+    }
+  }, [currentMember?.role, isDemoMode, domesticSupports, authFamily?.id]);
+
+  const reactivateDomesticSupport = useCallback(async (id: string): Promise<DomesticSupport> => {
+    const callerRole = currentMember?.role || (isDemoMode ? 'ADMIN' : 'MEMBER');
+    if (callerRole !== 'ADMIN' && !isDemoMode) {
+      throw new Error('Apenas administradores podem reativar ajuda externa.');
+    }
+
+    const existing = domesticSupports.find(s => s.id === id);
+    if (!existing) {
+      throw new Error('Registro de ajuda externa não encontrado.');
+    }
+
+    if (isDemoMode) {
+      const reactivated = reactivateDomesticSupportEntity(existing);
+      setDomesticSupports(prev => prev.map(s => s.id === id ? reactivated : s));
+      return reactivated;
+    }
+
+    if (!authFamily?.id) {
+      throw new Error('Nenhuma residência ativa selecionada.');
+    }
+
+    try {
+      const reactivated = await DomesticSupportService.reactivateSupport(authFamily.id, id, 'ADMIN');
+      setDomesticSupports(prev => prev.map(s => s.id === id ? reactivated : s));
+      return reactivated;
+    } catch (err: any) {
+      console.error('[AppContext] Erro ao reativar ajuda externa:', err);
+      throw new Error('Não foi possível reativar a ajuda externa. Tente novamente.');
+    }
+  }, [currentMember?.role, isDemoMode, domesticSupports, authFamily?.id]);
+
   return (
     <AppContext.Provider
       value={{
@@ -2362,7 +2593,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeChaosSession,
         loadActiveChaosSession,
         setActiveChaosSession,
-        reloadAssignments
+        reloadAssignments,
+        domesticSupports,
+        isDomesticSupportLoading,
+        domesticSupportError,
+        loadDomesticSupports,
+        addDomesticSupport,
+        updateDomesticSupport,
+        deactivateDomesticSupport,
+        reactivateDomesticSupport
       }}
     >
       {children}

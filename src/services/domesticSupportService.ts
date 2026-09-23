@@ -29,6 +29,63 @@ import {
   Task
 } from '../types';
 
+export const DOMESTIC_SUPPORT_WEEKDAYS = [
+  { value: 0, label: 'Domingo', short: 'Dom' },
+  { value: 1, label: 'Segunda-feira', short: 'Seg' },
+  { value: 2, label: 'Terça-feira', short: 'Ter' },
+  { value: 3, label: 'Quarta-feira', short: 'Qua' },
+  { value: 4, label: 'Quinta-feira', short: 'Qui' },
+  { value: 5, label: 'Sexta-feira', short: 'Sex' },
+  { value: 6, label: 'Sábado', short: 'Sáb' }
+] as const;
+
+/**
+ * Formata os horários do DomesticSupport para exibição limpa e compacta na UI.
+ * Exemplo com mesmo horário: "Segunda, Quarta e Sexta · 08:00–12:00"
+ * Exemplo com horários distintos: ["Segunda-feira · 08:00–12:00", "Quarta-feira · 14:00–18:00"]
+ */
+export function formatScheduleCompact(schedule: DomesticSupportSchedule[]): string[] {
+  if (!schedule || schedule.length === 0) return ['Sem horários definidos'];
+
+  const weekdayMap: Record<number, string> = {
+    0: 'Domingo',
+    1: 'Segunda-feira',
+    2: 'Terça-feira',
+    3: 'Quarta-feira',
+    4: 'Quinta-feira',
+    5: 'Sexta-feira',
+    6: 'Sábado'
+  };
+
+  const shortWeekdayMap: Record<number, string> = {
+    0: 'Domingo',
+    1: 'Segunda',
+    2: 'Terça',
+    3: 'Quarta',
+    4: 'Quinta',
+    5: 'Sexta',
+    6: 'Sábado'
+  };
+
+  const sorted = [...schedule].sort((a, b) => a.weekday - b.weekday || a.startTime.localeCompare(b.startTime));
+
+  const first = sorted[0];
+  const allSameHours = sorted.every(s => s.startTime === first.startTime && s.endTime === first.endTime);
+
+  if (allSameHours && sorted.length > 1) {
+    const dayNames = sorted.map(s => shortWeekdayMap[s.weekday]);
+    let joinedDays = '';
+    if (dayNames.length === 2) {
+      joinedDays = `${dayNames[0]} e ${dayNames[1]}`;
+    } else {
+      joinedDays = `${dayNames.slice(0, -1).join(', ')} e ${dayNames[dayNames.length - 1]}`;
+    }
+    return [`${joinedDays} · ${first.startTime}–${first.endTime}`];
+  }
+
+  return sorted.map(s => `${weekdayMap[s.weekday]} · ${s.startTime}–${s.endTime}`);
+}
+
 /**
  * Validação de horários do DomesticSupport.
  * - weekday: 0-6 (0 = Domingo, 6 = Sábado)
@@ -122,7 +179,7 @@ export function createDomesticSupportEntity(input: {
   familyId: string;
   name: string;
   type?: DomesticSupportType;
-  schedule: DomesticSupportSchedule[];
+  schedule?: DomesticSupportSchedule[];
 }): DomesticSupport {
   if (!input.familyId || typeof input.familyId !== 'string' || !input.familyId.trim()) {
     throw new Error('familyId is required to create DomesticSupport');
