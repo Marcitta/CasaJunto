@@ -325,6 +325,8 @@ export class FirestoreMappers {
       active: typeof data.active === 'boolean' ? data.active : (data.active !== undefined && data.active !== null ? Boolean(data.active) : true),
       chaosEligible: data.chaosEligible === true,
       assigned_automatically: data.assigned_automatically !== undefined ? Boolean(data.assigned_automatically) : true,
+      executionTarget: data.executionTarget || data.execution_target || undefined,
+      domesticSupportId: data.domesticSupportId !== undefined ? data.domesticSupportId : (data.domestic_support_id !== undefined ? data.domestic_support_id : undefined),
       customTitle: data.customTitle || data.custom_title || undefined,
       custom_title: data.custom_title || data.customTitle || undefined,
       customDescription: data.customDescription || data.custom_description || undefined,
@@ -357,6 +359,8 @@ export class FirestoreMappers {
       active: typeof task.active === 'boolean' ? task.active : (task.active !== undefined && task.active !== null ? Boolean(task.active) : true),
       chaosEligible: task.chaosEligible === true,
       assigned_automatically: task.assigned_automatically !== undefined ? Boolean(task.assigned_automatically) : true,
+      executionTarget: task.executionTarget || 'HOUSEHOLD',
+      domesticSupportId: task.domesticSupportId !== undefined ? task.domesticSupportId : null,
       createdAt: task.createdAt || task.created_at || now,
       updatedAt: now
     };

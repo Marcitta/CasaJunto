@@ -224,6 +224,8 @@ export function mapAssignmentsToTasks(params: {
       category: master?.category || 'cleaning',
       roomId: asg.room_id || fallbackRoomType,
       roomName: roomObj?.name || fallbackRoomType,
+      executionTarget: ft?.executionTarget || 'HOUSEHOLD',
+      domesticSupportId: ft?.domesticSupportId ?? null,
       completedAt: asg.completed_at,
       completedByMemberId: asg.completed_by,
       completedByName: asg.completed_by_name,
@@ -1006,6 +1008,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         active: true,
         chaosEligible: false,
         assigned_automatically: true,
+        executionTarget: newTask.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: newTask.executionTarget === 'HOUSEHOLD' ? null : (newTask.domesticSupportId ?? null),
         created_at: nowIso,
         createdAt: nowIso,
         updated_at: nowIso,
@@ -1081,6 +1085,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         unassignedReason: occ.unassigned_reason,
         isUnassigned,
         taskMasterId: familyTask.task_master_id,
+        executionTarget: familyTask.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: familyTask.domesticSupportId ?? null,
         factors: newTask.factors,
         createdAt: nowIso,
         updatedAt: nowIso
@@ -1914,6 +1920,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       roomId: data.room_id || data.roomId || 'geral',
       active: true,
       chaosEligible: data.chaosEligible === true,
+      executionTarget: data.executionTarget || 'HOUSEHOLD',
+      domesticSupportId: data.executionTarget === 'HOUSEHOLD' ? null : (data.domesticSupportId ?? null),
       start_date: data.start_date || (data as any).startDate || getFamilyLocalDate(family.timezone),
       startDate: data.start_date || (data as any).startDate || getFamilyLocalDate(family.timezone),
       created_at: now,
@@ -1982,7 +1990,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         description: isCompleted ? t.description : resolvedDescription,
         status: aff && aff.status === 'CANCELLED' ? 'CANCELLED' : t.status,
         scheduledStart: aff?.scheduled_start || t.scheduledStart,
-        roomId: aff?.room_id || (result.updatedRoutine.room_id || result.updatedRoutine.roomId) || t.roomId
+        roomId: aff?.room_id || (result.updatedRoutine.room_id || result.updatedRoutine.roomId) || t.roomId,
+        executionTarget: result.updatedRoutine.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: result.updatedRoutine.domesticSupportId ?? null
       };
     }));
   };

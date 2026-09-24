@@ -48,6 +48,7 @@ import { runStabilizationCloseout1aTestSuite } from './stabilizationCloseout1a.t
 import { runDomesticSupport1aTestSuite } from './domesticSupport1a.test';
 import { runDomesticSupport1bTestSuite } from './domesticSupport1b.test';
 import { runDomesticSupport1bHf1TestSuite } from './domesticSupport1bHf1.test';
+import { runDomesticSupport1cTestSuite } from './domesticSupport1c.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -713,6 +714,20 @@ for (const r of ds1bHf1Results) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] DomesticSupport1B-HF1 ${r.id}: ${r.name} - ${r.error || ''}`);
+  }
+}
+
+// 51. DOMESTIC-SUPPORT-1C: Classificação das Rotinas — Quem normalmente executa? (25 TESTES: DS1C-01 - DS1C-25)
+console.log('\n--- GRUPO 51: DOMESTIC-SUPPORT-1C (CLASSIFICAÇÃO DAS ROTINAS - ADMIN UX - DS1C-01 - DS1C-25) ---');
+const ds1cResults = await runDomesticSupport1cTestSuite();
+for (const r of ds1cResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] DomesticSupport1C ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] DomesticSupport1C ${r.id}: ${r.name} - ${r.error || ''}`);
   }
 }
 

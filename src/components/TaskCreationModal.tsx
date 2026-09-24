@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { X, Calendar, Clock, Home, AlertCircle, Repeat, ShieldAlert } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { CatalogTemplate } from '../types';
+import { CatalogTemplate, ExecutionTarget } from '../types';
 import { getTodayDateString } from '../data/mockData';
+import { ExecutionTargetSelector } from './DomesticSupport/ExecutionTargetSelector';
+import { validateFamilyTaskExecutionTarget } from '../services/domesticSupportService';
 
 interface TaskCreationModalProps {
   isOpen: boolean;
@@ -15,7 +17,7 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
   onClose,
   template
 }) => {
-  const { rooms, addTask, selectedDate, currentMember } = useApp();
+  const { rooms, addTask, selectedDate, currentMember, domesticSupports, setCurrentView, authFamily, family } = useApp();
 
   const [title, setTitle] = useState(template?.title || '');
   const [description, setDescription] = useState(template?.description || '');
@@ -23,11 +25,14 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
   const [frequency, setFrequency] = useState<string>(template?.suggestedFrequency || 'DAILY');
   const [taskDate, setTaskDate] = useState<string>(selectedDate || getTodayDateString());
   const [scheduledTime, setScheduledTime] = useState<string>('');
+  const [executionTarget, setExecutionTarget] = useState<ExecutionTarget>('HOUSEHOLD');
+  const [domesticSupportId, setDomesticSupportId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const activeRooms = React.useMemo(() => rooms.filter(r => r.active !== false), [rooms]);
   const isMemberBlocked = Boolean(currentMember?.role && currentMember.role !== 'ADMIN');
+  const activeSupports = React.useMemo(() => (domesticSupports || []).filter(s => s.active), [domesticSupports]);
 
   // Synchronize when template changes
   React.useEffect(() => {
@@ -49,6 +54,8 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
     }
     setTaskDate(selectedDate || getTodayDateString());
     setScheduledTime('');
+    setExecutionTarget('HOUSEHOLD');
+    setDomesticSupportId(null);
     setError(null);
     setIsSubmitting(false);
   }, [template, isOpen, activeRooms, selectedDate]);
@@ -74,6 +81,34 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
     }
     if (!selectedRoomId) {
       setError('Selecione um ambiente da casa.');
+      return;
+    }
+
+    if (executionTarget === 'EXTERNAL_SUPPORT') {
+      if (activeSupports.length === 0) {
+        setError('Você ainda não tem uma ajuda externa ativa cadastrada.');
+        return;
+      }
+      if (!domesticSupportId) {
+        setError('Selecione quem normalmente faz esta tarefa.');
+        return;
+      }
+    }
+
+    const targetValidation = validateFamilyTaskExecutionTarget(
+      {
+        familyId: authFamily?.id || family?.id,
+        executionTarget,
+        domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
+      },
+      domesticSupports || []
+    );
+    if (!targetValidation.valid) {
+      if (executionTarget === 'EXTERNAL_SUPPORT' && !domesticSupportId) {
+        setError('Selecione quem normalmente faz esta tarefa.');
+      } else {
+        setError('Verifique as informações da ajuda externa selecionada.');
+      }
       return;
     }
 
@@ -113,7 +148,9 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
         isUnassigned: true,
         assigneeId: '',
         assignedMemberId: '',
-        assigneeName: 'Não atribuído'
+        assigneeName: 'Não atribuído',
+        executionTarget,
+        domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
       });
 
       onClose();
@@ -126,7 +163,7 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-      <div className="w-full max-w-md bg-surface-card rounded-3xl border border-border-default shadow-xl overflow-hidden p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-surface-card rounded-3xl border border-border-default shadow-xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-brand-primary-soft flex items-center justify-center text-brand-primary">
@@ -217,6 +254,24 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
             </select>
           </div>
 
+          {/* Quem normalmente faz esta tarefa? (ADMIN UX) */}
+          {!isMemberBlocked && (
+            <ExecutionTargetSelector
+              executionTarget={executionTarget}
+              domesticSupportId={domesticSupportId}
+              onChange={(target, supportId) => {
+                setExecutionTarget(target);
+                setDomesticSupportId(supportId);
+              }}
+              activeSupports={activeSupports}
+              onOpenDomesticSupport={() => {
+                onClose();
+                setCurrentView('domestic_support');
+              }}
+              disabled={isSubmitting}
+            />
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-text-secondary mb-1 flex items-center gap-1">
@@ -272,7 +327,12 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isMemberBlocked || isSubmitting || activeRooms.length === 0}
+              disabled={
+                isMemberBlocked ||
+                isSubmitting ||
+                activeRooms.length === 0 ||
+                (executionTarget === 'EXTERNAL_SUPPORT' && (!domesticSupportId || activeSupports.length === 0))
+              }
               className="px-4 py-2 rounded-xl bg-brand-primary text-text-on-primary text-xs font-bold shadow-xs hover:bg-brand-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer"
             >
               {isSubmitting ? 'Criando...' : 'Criar Tarefa'}

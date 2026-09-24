@@ -2,8 +2,10 @@ import React, { useState, useEffect, useContext } from 'react';
 import { X, Clock, Home, Calendar, AlertCircle, CheckCircle2, Sliders, Shield, Edit3 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
-import { FamilyTask, Task } from '../types';
+import { FamilyTask, Task, ExecutionTarget } from '../types';
 import { allMasterTasks } from '../data/tasks';
+import { ExecutionTargetSelector } from './DomesticSupport/ExecutionTargetSelector';
+import { resolveExecutionTarget, validateFamilyTaskExecutionTarget } from '../services/domesticSupportService';
 
 export interface EditFamilyTaskModalProps {
   isOpen: boolean;
@@ -33,7 +35,11 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
     rooms, 
     updateRoutine, 
     currentMember, 
-    isDemoMode 
+    isDemoMode,
+    domesticSupports,
+    setCurrentView,
+    family,
+    authFamily
   } = useApp();
   const authContext = useContext(AuthContext);
   const currentMembership = authContext?.currentMembership;
@@ -45,6 +51,7 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
   );
 
   const activeRooms = rooms.filter(r => r.active !== false);
+  const activeSupports = React.useMemo(() => (domesticSupports || []).filter(s => s.active), [domesticSupports]);
 
   // Find target family task
   const targetRoutineId = familyTaskId || initialTask?.familyTaskId;
@@ -58,6 +65,8 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
   const [preferredTime, setPreferredTime] = useState<string>('08:00');
   const [frequency, setFrequency] = useState<'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY'>('DAILY');
   const [preferredDays, setPreferredDays] = useState<number[]>([1, 3, 5]);
+  const [executionTarget, setExecutionTarget] = useState<ExecutionTarget>('HOUSEHOLD');
+  const [domesticSupportId, setDomesticSupportId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -76,6 +85,9 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
         setFrequency('DAILY');
       }
       setPreferredDays(routine.preferred_days || routine.preferredDays || [1, 3, 5]);
+      const resolvedTarget = resolveExecutionTarget(routine);
+      setExecutionTarget(resolvedTarget);
+      setDomesticSupportId(resolvedTarget === 'HOUSEHOLD' ? null : (routine.domesticSupportId || null));
     } else if (initialTask) {
       setCustomTitle('');
       setCustomDescription('');
@@ -86,6 +98,12 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
       if (['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY'].includes(f)) {
         setFrequency(f as any);
       }
+      const resolvedTarget = resolveExecutionTarget(initialTask);
+      setExecutionTarget(resolvedTarget);
+      setDomesticSupportId(resolvedTarget === 'HOUSEHOLD' ? null : (initialTask.domesticSupportId || null));
+    } else {
+      setExecutionTarget('HOUSEHOLD');
+      setDomesticSupportId(null);
     }
     setError(null);
     setSuccess(null);
@@ -121,6 +139,35 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
       return;
     }
 
+    if (executionTarget === 'EXTERNAL_SUPPORT') {
+      if (activeSupports.length === 0) {
+        setError('Você ainda não tem uma ajuda externa ativa cadastrada.');
+        return;
+      }
+      if (!domesticSupportId) {
+        setError('Selecione quem normalmente faz esta tarefa.');
+        return;
+      }
+    }
+
+    const validation = validateFamilyTaskExecutionTarget(
+      {
+        familyId: authFamily?.id || family?.id,
+        executionTarget,
+        domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
+      },
+      domesticSupports || []
+    );
+
+    if (!validation.valid) {
+      if (executionTarget === 'EXTERNAL_SUPPORT' && !domesticSupportId) {
+        setError('Selecione quem normalmente faz esta tarefa.');
+      } else {
+        setError('Verifique as informações da ajuda externa selecionada.');
+      }
+      return;
+    }
+
     const trimmedTitle = customTitle.trim();
     const trimmedDescription = customDescription.trim();
 
@@ -140,7 +187,9 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
         customTitle: trimmedTitle || undefined,
         custom_title: trimmedTitle || undefined,
         customDescription: trimmedDescription || undefined,
-        custom_description: trimmedDescription || undefined
+        custom_description: trimmedDescription || undefined,
+        executionTarget,
+        domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
       };
 
       if (routine) {
@@ -165,7 +214,7 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-      <div className="w-full max-w-lg bg-surface-card rounded-3xl border border-border-default shadow-2xl overflow-hidden p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-surface-card rounded-3xl border border-border-default shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200">
         
         {/* Modal Header */}
         <div className="flex items-center justify-between">
@@ -374,6 +423,24 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
             </div>
           )}
 
+          {/* Quem normalmente faz esta tarefa? (ADMIN UX) */}
+          {isAdmin && (
+            <ExecutionTargetSelector
+              executionTarget={executionTarget}
+              domesticSupportId={domesticSupportId}
+              onChange={(target, supportId) => {
+                setExecutionTarget(target);
+                setDomesticSupportId(supportId);
+              }}
+              activeSupports={activeSupports}
+              onOpenDomesticSupport={() => {
+                onClose();
+                setCurrentView('domestic_support');
+              }}
+              disabled={isSubmitting}
+            />
+          )}
+
           {/* Botões de Ação */}
           <div className="pt-3 flex items-center justify-end gap-2 border-t border-border-default">
             <button
@@ -385,7 +452,11 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !isAdmin}
+              disabled={
+                isSubmitting ||
+                !isAdmin ||
+                (executionTarget === 'EXTERNAL_SUPPORT' && (!domesticSupportId || activeSupports.length === 0))
+              }
               className="px-4 py-2 rounded-xl text-xs font-bold bg-brand-primary text-text-on-primary hover:bg-brand-primary-hover shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               {isSubmitting ? 'Salvando...' : 'Salvar Alterações'}
