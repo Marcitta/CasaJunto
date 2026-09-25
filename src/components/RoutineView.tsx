@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { 
   Calendar, 
   Repeat, 
@@ -15,7 +15,7 @@ import {
   ListChecks
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { useAuth } from '../context/AuthContext';
+import { AuthContext } from '../context/AuthContext';
 import { FamilyTask, Task } from '../types';
 import { EditFamilyTaskModal } from './EditFamilyTaskModal';
 import { TaskCreationModal } from './TaskCreationModal';
@@ -35,7 +35,7 @@ export const RoutineView: React.FC = () => {
     rooms, 
     family, 
     currentMember, 
-    isDemoMode,
+    isDemoMode: appDemoMode,
     domesticSupports,
     selectedDate,
     deactivateRoutine,
@@ -43,10 +43,14 @@ export const RoutineView: React.FC = () => {
     updateRoutine,
     setActiveTaskForInspect
   } = useApp();
-  const { currentUser, currentMembership } = useAuth();
+  const authContext = useContext(AuthContext);
+  const currentUser = authContext?.currentUser;
+  const currentMembership = authContext?.currentMembership;
+  const isDemoMode = Boolean(appDemoMode || authContext?.isDemoMode);
 
   const isAdmin = Boolean(
     isDemoMode || 
+    currentUser?.id === family?.ownerUserId ||
     currentMembership?.role === 'ADMIN' || 
     currentMember?.role === 'ADMIN'
   );
@@ -180,36 +184,34 @@ export const RoutineView: React.FC = () => {
         </div>
       )}
 
-      {/* Tabs - Only ADMIN can switch to Rotinas Cadastradas; MEMBER only has Visão Semanal */}
-      {isAdmin && (
-        <div className="flex items-center gap-2 border-b border-border-default pb-2">
-          <button
-            onClick={() => setViewMode('WEEKLY')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-              viewMode === 'WEEKLY'
-                ? 'bg-brand-primary text-text-on-primary shadow-2xs'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-subtle'
-            }`}
-          >
-            <CalendarDays className="w-3.5 h-3.5" />
-            <span>Visão Semanal ({weekDays.reduce((acc, d) => acc + d.dayTasksCount, 0)} tarefas)</span>
-          </button>
-          <button
-            onClick={() => setViewMode('ROUTINES')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-              viewMode === 'ROUTINES'
-                ? 'bg-brand-primary text-text-on-primary shadow-2xs'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-subtle'
-            }`}
-          >
-            <ListChecks className="w-3.5 h-3.5" />
-            <span>Rotinas Cadastradas ({familyTasks.length})</span>
-          </button>
-        </div>
-      )}
+      {/* Tabs - Both ADMIN and MEMBER can view; mutating actions are reserved for ADMIN */}
+      <div className="flex items-center gap-2 border-b border-border-default pb-2">
+        <button
+          onClick={() => setViewMode('WEEKLY')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+            viewMode === 'WEEKLY'
+              ? 'bg-brand-primary text-text-on-primary shadow-2xs'
+              : 'text-text-secondary hover:text-text-primary hover:bg-surface-subtle'
+          }`}
+        >
+          <CalendarDays className="w-3.5 h-3.5" />
+          <span>Visão Semanal ({weekDays.reduce((acc, d) => acc + d.dayTasksCount, 0)} tarefas)</span>
+        </button>
+        <button
+          onClick={() => setViewMode('ROUTINES')}
+          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+            viewMode === 'ROUTINES'
+              ? 'bg-brand-primary text-text-on-primary shadow-2xs'
+              : 'text-text-secondary hover:text-text-primary hover:bg-surface-subtle'
+          }`}
+        >
+          <ListChecks className="w-3.5 h-3.5" />
+          <span>Rotinas Cadastradas ({familyTasks.length})</span>
+        </button>
+      </div>
 
       {/* TAB 1: VISÃO SEMANAL */}
-      {(viewMode === 'WEEKLY' || !isAdmin) && (
+      {viewMode === 'WEEKLY' && (
         <div className="space-y-4">
           {/* Day Selector Strip */}
           <div className="grid grid-cols-7 gap-2">
@@ -346,8 +348,8 @@ export const RoutineView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: ROTINAS CADASTRADAS (FAMILY TASKS - ADMIN ONLY) */}
-      {isAdmin && viewMode === 'ROUTINES' && (
+      {/* TAB 2: ROTINAS CADASTRADAS (FAMILY TASKS - ALL MEMBERS CAN VIEW, ADMIN CAN EDIT) */}
+      {viewMode === 'ROUTINES' && (
         <div className="space-y-6">
           {frequencies.map(freq => {
             const freqRoutines = familyTasks.filter(ft => freq.match(ft.frequency || ''));
@@ -369,7 +371,9 @@ export const RoutineView: React.FC = () => {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {freqRoutines.map(routine => {
-                      const room = rooms.find(r => r.id === (routine.room_id || routine.roomId));
+                      const master = allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id || (routine as any).taskId));
+                      const displayName = routine.customTitle || routine.custom_title || routine.name || master?.name || 'Rotina';
+                      const room = rooms.find(r => r.id === (routine.room_id || routine.roomId)) || (routine.room ? { id: routine.room, name: routine.room } as any : undefined);
                       const isPaused = routine.active === false;
                       const preferredDays = routine.preferred_days || routine.preferredDays || [];
 
@@ -386,7 +390,7 @@ export const RoutineView: React.FC = () => {
                             <div>
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className={`text-xs font-bold ${isPaused ? 'text-text-muted line-through' : 'text-text-primary'}`}>
-                                  {routine.customTitle || routine.custom_title || routine.name || 'Rotina'}
+                                  {displayName}
                                 </p>
                                 <span className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0">
                                   {formatExecutionTargetDisplay(routine, domesticSupports).label}

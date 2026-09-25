@@ -58,7 +58,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
 
     selectedTasks.forEach(task => {
       const existing = familyTasks.find(ft =>
-        (ft.task_master_id === task.id || ft.taskMasterId === task.id || ft.task_id === task.id || ft.taskId === task.id)
+        (ft.task_master_id === task.id || ft.taskMasterId === task.id || ft.task_id === task.id || ft.taskId === task.id || ft.id === task.id)
       );
 
       let status: 'NEW' | 'REACTIVATE' | 'ALREADY_ACTIVE' = 'NEW';
@@ -228,6 +228,9 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
 
     const payload: BatchAddRoutineInput[] = tasksToCommit.map(task => {
       const cfg = configs[task.id];
+      const existing = familyTasks.find(ft =>
+        (ft.task_master_id === task.id || ft.taskMasterId === task.id || ft.task_id === task.id || ft.taskId === task.id || ft.id === task.id)
+      );
       return {
         taskMasterId: task.id,
         name: task.name,
@@ -238,7 +241,9 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
         dayOfMonth: cfg.frequency === 'MONTHLY' ? cfg.dayOfMonth : undefined,
         preferredTime: cfg.preferredTime || '09:00',
         durationMinutes: task.duration_minutes || 20,
-        effort: task.effort_level ? task.effort_level * 5 : 10
+        effort: task.effort_level ? task.effort_level * 5 : 10,
+        executionTarget: existing?.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: existing?.domesticSupportId ?? null
       };
     });
 

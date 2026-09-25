@@ -300,13 +300,15 @@ export class FirestoreMappers {
   // 6. FAMILY TASK
   public static toFamilyTask(docId: string, data: any): FamilyTask {
     const now = new Date().toISOString();
+    const resolvedName = data.name || data.customTitle || data.custom_title || undefined;
+    const resolvedCustomTitle = data.customTitle || data.custom_title || data.name || undefined;
     return {
       id: docId,
       family_id: data.family_id || data.familyId || '',
       familyId: data.familyId || data.family_id || '',
       task_master_id: data.task_master_id || data.taskMasterId || undefined,
       taskMasterId: data.taskMasterId || data.task_master_id || undefined,
-      name: data.name || undefined,
+      name: resolvedName,
       custom_name: data.custom_name || undefined,
       room_id: data.room_id || data.roomId || undefined,
       roomId: data.roomId || data.room_id || undefined,
@@ -327,8 +329,8 @@ export class FirestoreMappers {
       assigned_automatically: data.assigned_automatically !== undefined ? Boolean(data.assigned_automatically) : true,
       executionTarget: data.executionTarget || data.execution_target || 'HOUSEHOLD',
       domesticSupportId: data.domesticSupportId !== undefined ? data.domesticSupportId : (data.domestic_support_id !== undefined ? data.domestic_support_id : null),
-      customTitle: data.customTitle || data.custom_title || data.name || undefined,
-      custom_title: data.custom_title || data.customTitle || data.name || undefined,
+      customTitle: resolvedCustomTitle,
+      custom_title: resolvedCustomTitle,
       customDescription: data.customDescription || data.custom_description || undefined,
       custom_description: data.custom_description || data.customDescription || undefined,
       createdAt: data.createdAt || data.created_at || now,
@@ -338,14 +340,16 @@ export class FirestoreMappers {
 
   public static fromFamilyTask(task: Partial<FamilyTask>): Record<string, any> {
     const now = new Date().toISOString();
-    return {
+    const resolvedName = task.name || task.customTitle || task.custom_title || null;
+    const resolvedCustomTitle = task.customTitle || task.custom_title || task.name || null;
+    const payload: Record<string, any> = {
       id: task.id,
-      family_id: task.family_id || task.familyId,
+      family_id: task.family_id || task.familyId || null,
       task_master_id: (task.task_master_id || task.taskMasterId) ?? null,
-      name: task.name || null,
+      name: resolvedName,
       custom_name: task.custom_name || null,
-      customTitle: task.customTitle || task.custom_title || task.name || null,
-      custom_title: task.custom_title || task.customTitle || task.name || null,
+      customTitle: resolvedCustomTitle,
+      custom_title: resolvedCustomTitle,
       customDescription: task.customDescription || task.custom_description || null,
       custom_description: task.custom_description || task.customDescription || null,
       room_id: task.room_id || task.roomId || null,
@@ -364,6 +368,7 @@ export class FirestoreMappers {
       createdAt: task.createdAt || task.created_at || now,
       updatedAt: now
     };
+    return FirestoreMappers.sanitizePayload(payload);
   }
 
   // 7. TASK ASSIGNMENT

@@ -409,6 +409,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setMembers([]);
       setProtectedTimes([]);
       setRooms([]);
+      setFamilyTasks([]);
+      setTasks([]);
       setDomesticSupports([]);
       setIsDomesticSupportLoading(true);
       setDomesticSupportError(null);
@@ -2152,7 +2154,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     for (const item of items) {
       try {
         const existingIndex = currentRoutines.findIndex(
-          ft => (ft.task_master_id === item.taskMasterId || ft.taskMasterId === item.taskMasterId || ft.task_id === item.taskMasterId || ft.taskId === item.taskMasterId)
+          ft => (
+            (item.taskMasterId && (ft.task_master_id === item.taskMasterId || ft.taskMasterId === item.taskMasterId || ft.task_id === item.taskMasterId || ft.taskId === item.taskMasterId)) ||
+            ft.id === item.taskMasterId
+          )
         );
 
         if (existingIndex >= 0) {
@@ -2162,23 +2167,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             continue;
           }
 
+          const isCustom = !existing.task_master_id && !existing.taskMasterId;
+          const master = !isCustom ? allMasterTasks.find(tm => tm.id === (existing.task_master_id || existing.taskMasterId || item.taskMasterId)) : undefined;
+          const resolvedName = item.name || existing.name || existing.customTitle || master?.name || 'Rotina';
+
           // Reactivate existing FamilyTask: REUSE SAME ID!
           const reactivated: FamilyTask = {
             ...existing,
             active: true,
+            name: resolvedName,
+            customTitle: existing.customTitle || existing.custom_title || resolvedName,
+            custom_title: existing.custom_title || existing.customTitle || resolvedName,
             room_id: item.roomId || existing.room_id || existing.roomId || 'geral',
             roomId: item.roomId || existing.roomId || existing.room_id || 'geral',
             frequency: item.frequency || existing.frequency || 'DAILY',
-            preferred_days: item.preferredDays || existing.preferred_days || existing.preferredDays || [],
-            preferredDays: item.preferredDays || existing.preferredDays || existing.preferred_days || [],
+            preferred_days: item.preferredDays || existing.preferred_days || existing.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
+            preferredDays: item.preferredDays || existing.preferredDays || existing.preferred_days || (item.frequency === 'WEEKLY' ? [1] : []),
             day_of_month: item.dayOfMonth ?? existing.day_of_month ?? existing.dayOfMonth,
             dayOfMonth: item.dayOfMonth ?? existing.dayOfMonth ?? existing.day_of_month,
             preferred_time: item.preferredTime || existing.preferred_time || existing.preferredTime || '09:00',
             preferredTime: item.preferredTime || existing.preferredTime || existing.preferred_time || '09:00',
             executionTarget: (item as any).executionTarget || existing.executionTarget || 'HOUSEHOLD',
             domesticSupportId: (item as any).executionTarget === 'HOUSEHOLD' ? null : ((item as any).domesticSupportId ?? existing.domesticSupportId ?? null),
-            start_date: item.startDate || today,
-            startDate: item.startDate || today,
+            start_date: item.startDate || existing.start_date || existing.startDate || today,
+            startDate: item.startDate || existing.startDate || existing.start_date || today,
             updated_at: now,
             updatedAt: now
           };
@@ -2192,17 +2204,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reactivatedCount++;
         } else {
           // Create new canonical FamilyTask
+          const master = allMasterTasks.find(tm => tm.id === item.taskMasterId);
+          const isCustom = !master;
+          const resolvedName = item.name || master?.name || 'Rotina';
+
           const routineId = isDemoMode || !authFamily ? `ft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : doc(collection(db, 'families', familyId, 'familyTasks')).id;
           const newRoutine: FamilyTask = {
             id: routineId,
             family_id: familyId,
             familyId,
-            task_id: item.taskMasterId,
-            taskId: item.taskMasterId,
-            task_master_id: item.taskMasterId,
-            taskMasterId: item.taskMasterId,
-            name: item.name,
-            category: item.category,
+            task_id: isCustom ? undefined : item.taskMasterId,
+            taskId: isCustom ? undefined : item.taskMasterId,
+            task_master_id: isCustom ? undefined : item.taskMasterId,
+            taskMasterId: isCustom ? undefined : item.taskMasterId,
+            name: resolvedName,
+            customTitle: resolvedName,
+            custom_title: resolvedName,
+            category: item.category || master?.category || 'cleaning',
             room_id: item.roomId || 'geral',
             roomId: item.roomId || 'geral',
             frequency: item.frequency || 'DAILY',

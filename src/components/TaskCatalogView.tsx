@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useContext } from 'react';
 import { 
   Search, 
   Check, 
@@ -18,19 +18,29 @@ import {
 } from 'lucide-react';
 import { allMasterTasks, taskCategoryLabels, roomTypeLabels } from '../data/tasks';
 import { useApp } from '../context/AppContext';
+import { AuthContext } from '../context/AuthContext';
 import { TaskMaster, FamilyTask, BatchAddRoutineInput } from '../types';
 import { BatchConfigurationModal } from './BatchConfigurationModal';
 import { BatchRemoveModal } from './BatchRemoveModal';
 import { EditFamilyTaskModal } from './EditFamilyTaskModal';
+import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
 
 export const TaskCatalogView: React.FC = () => {
   const { 
     familyTasks, 
     rooms, 
     currentMember, 
+    domesticSupports,
+    isDemoMode: appDemoMode,
+    family,
     batchAddRoutines, 
     batchDeactivateRoutines 
   } = useApp();
+  const authContext = useContext(AuthContext);
+  const currentUser = authContext?.currentUser;
+  const currentFamily = authContext?.currentFamily || family;
+  const currentMembership = authContext?.currentMembership;
+  const isDemoMode = Boolean(appDemoMode || authContext?.isDemoMode);
 
   // Filters State
   const [search, setSearch] = useState('');
@@ -59,7 +69,12 @@ export const TaskCatalogView: React.FC = () => {
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // RBAC: Check if current caller is ADMIN
-  const isAdmin = currentMember?.role === 'ADMIN';
+  const isAdmin = currentMember 
+    ? currentMember.role === 'ADMIN' 
+    : Boolean(
+        isDemoMode ||
+        authContext?.currentMembership?.role === 'ADMIN'
+      );
 
   // Custom FamilyTasks (belonging only to current family, without TaskMaster)
   const customCatalogItems = useMemo(() => {
@@ -691,8 +706,21 @@ export const TaskCatalogView: React.FC = () => {
                       />
                     </label>
 
-                    {/* Subtle Status Indicator */}
-                    <div className="flex items-center gap-1.5 pt-0.5">
+                    {/* Subtle Status & Execution Target Indicator */}
+                    <div className="flex items-center gap-1.5 pt-0.5 flex-wrap justify-end">
+                      {ft && (
+                        <span
+                          id={`task-target-${task.id}`}
+                          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border ${
+                            status === 'INACTIVE'
+                              ? 'bg-surface-subtle border-border-default text-text-muted opacity-70'
+                              : 'bg-surface-card border-border-default text-text-secondary'
+                          }`}
+                        >
+                          {formatExecutionTargetDisplay(ft, domesticSupports).label}
+                        </span>
+                      )}
+
                       {status === 'ACTIVE' ? (
                         <span
                           id={`task-status-${task.id}`}

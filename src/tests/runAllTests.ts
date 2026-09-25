@@ -50,6 +50,7 @@ import { runDomesticSupport1bTestSuite } from './domesticSupport1b.test';
 import { runDomesticSupport1bHf1TestSuite } from './domesticSupport1bHf1.test';
 import { runDomesticSupport1cTestSuite } from './domesticSupport1c.test';
 import { runDomesticSupport1cHf1Tests } from './domesticSupport1cHf1.test';
+import { runDomesticSupport1cHf2Tests } from './domesticSupport1cHf2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -736,6 +737,20 @@ for (const r of ds1cResults) {
 console.log('\n--- GRUPO 52: DOMESTIC-SUPPORT-1C-HF1 (ROUTINE VISIBILITY REGRESSION + EXECUTION TARGET VISIBILITY - DS1C-HF1-01 - DS1C-HF1-18) ---');
 const ds1cHf1Results = await runDomesticSupport1cHf1Tests();
 for (const r of ds1cHf1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 53. DOMESTIC-SUPPORT-1C-HF2: Visibilidade Catálogo x Rotina + Badge de ExecutionTarget (10 TESTES: DS1C-HF2-01 - DS1C-HF2-10)
+console.log('\n--- GRUPO 53: DOMESTIC-SUPPORT-1C-HF2 (VISIBILIDADE CATÁLOGO X ROTINA + EXECUTION TARGET NO CATÁLOGO - DS1C-HF2-01 - DS1C-HF2-10) ---');
+const ds1cHf2Results = await runDomesticSupport1cHf2Tests();
+for (const r of ds1cHf2Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

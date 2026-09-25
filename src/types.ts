@@ -335,6 +335,8 @@ export interface BatchAddRoutineInput {
   category?: string;
   durationMinutes?: number;
   effort?: number;
+  executionTarget?: ExecutionTarget;
+  domesticSupportId?: string | null;
 }
 
 export interface BatchAddResult {
