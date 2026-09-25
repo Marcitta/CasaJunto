@@ -119,7 +119,8 @@ export interface Member {
 export type DomesticSupportType = 'CLEANER';
 
 export interface DomesticSupportSchedule {
-  weekday: number; // 0-6 (0 = Domingo, 6 = Sábado)
+  weekday?: number; // 0-6 (0 = Domingo, 6 = Sábado)
+  dayOfWeek?: number;
   startTime: string; // HH:mm
   endTime: string; // HH:mm
 }
@@ -301,6 +302,7 @@ export interface FamilyTask {
   preferred_time?: string;
   preferredTime?: string;
   estimated_minutes?: number;
+  estimatedMinutes?: number;
   min_age?: number;
   min_autonomy?: number;
   difficulty_score?: number;

@@ -17,7 +17,7 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
   onClose,
   template
 }) => {
-  const { rooms, addTask, selectedDate, currentMember, domesticSupports, setCurrentView, authFamily, family } = useApp();
+  const { rooms, addTask, selectedDate, currentMember, domesticSupports, setCurrentView, family } = useApp();
 
   const [title, setTitle] = useState(template?.title || '');
   const [description, setDescription] = useState(template?.description || '');
@@ -97,7 +97,7 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
 
     const targetValidation = validateFamilyTaskExecutionTarget(
       {
-        familyId: authFamily?.id || family?.id,
+        familyId: family?.id,
         executionTarget,
         domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
       },

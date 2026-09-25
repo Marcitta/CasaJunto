@@ -4,6 +4,7 @@ import confetti from 'canvas-confetti';
 import { useApp } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
 import { Task } from '../types';
+import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
 import { getFamilyLocalDate, getTodayDateString } from '../domain/utils/dateTimeUtils';
 import { 
   computeTodayProgress, 
@@ -36,6 +37,7 @@ export const TodayView: React.FC<TodayViewProps> = ({
     family,
     selectedDate,
     isDemoMode,
+    domesticSupports,
     familyTasks,
     activeChaosSession
   } = useApp();
@@ -336,6 +338,12 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         </span>
                         <span className="text-[10px] font-semibold text-brand-accent">
                           +{task.effort || 10} pts
+                        </span>
+                        <span 
+                          id={`badge-target-${task.id}`}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-surface-subtle border border-border-default text-text-secondary flex items-center gap-1"
+                        >
+                          {formatExecutionTargetDisplay(task, domesticSupports).label}
                         </span>
                         {isChaosTask && (
                           <span

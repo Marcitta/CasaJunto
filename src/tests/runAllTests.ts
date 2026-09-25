@@ -49,6 +49,7 @@ import { runDomesticSupport1aTestSuite } from './domesticSupport1a.test';
 import { runDomesticSupport1bTestSuite } from './domesticSupport1b.test';
 import { runDomesticSupport1bHf1TestSuite } from './domesticSupport1bHf1.test';
 import { runDomesticSupport1cTestSuite } from './domesticSupport1c.test';
+import { runDomesticSupport1cHf1Tests } from './domesticSupport1cHf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -728,6 +729,20 @@ for (const r of ds1cResults) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] DomesticSupport1C ${r.id}: ${r.name} - ${r.error || ''}`);
+  }
+}
+
+// 52. DOMESTIC-SUPPORT-1C-HF1: Routine Visibility Regression + Execution Target Visibility (18 TESTES: DS1C-HF1-01 - DS1C-HF1-18)
+console.log('\n--- GRUPO 52: DOMESTIC-SUPPORT-1C-HF1 (ROUTINE VISIBILITY REGRESSION + EXECUTION TARGET VISIBILITY - DS1C-HF1-01 - DS1C-HF1-18) ---');
+const ds1cHf1Results = await runDomesticSupport1cHf1Tests();
+for (const r of ds1cHf1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
   }
 }
 

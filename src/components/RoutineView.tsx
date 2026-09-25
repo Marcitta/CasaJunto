@@ -22,6 +22,7 @@ import { TaskCreationModal } from './TaskCreationModal';
 import { getFamilyLocalDate, addDaysToDate, getDayOfWeek } from '../domain/utils/dateTimeUtils';
 import { allMasterTasks } from '../data/tasks';
 import { selectVisibleRoutineTasks } from '../domain/rbac/rolePermissions';
+import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const WEEKDAYS_FULL = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
@@ -35,6 +36,8 @@ export const RoutineView: React.FC = () => {
     family, 
     currentMember, 
     isDemoMode,
+    domesticSupports,
+    selectedDate,
     deactivateRoutine,
     reactivateRoutine,
     updateRoutine,
@@ -54,7 +57,7 @@ export const RoutineView: React.FC = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
-  const todayStr = getFamilyLocalDate(family?.timezone);
+  const todayStr = selectedDate || getFamilyLocalDate(family?.timezone);
 
   // Generate 7 consecutive days starting from today
   const weekDays = Array.from({ length: 7 }, (_, i) => {
@@ -104,10 +107,46 @@ export const RoutineView: React.FC = () => {
   };
 
   const frequencies = [
-    { key: 'DAILY', label: 'Diárias', match: (f: string) => f === 'DAILY' || f === 'daily' },
-    { key: 'WEEKLY', label: 'Semanais', match: (f: string) => f === 'WEEKLY' || f === 'weekly' || f === 'SEVERAL_TIMES_WEEK' },
-    { key: 'BIWEEKLY', label: 'Quinzenais', match: (f: string) => f === 'BIWEEKLY' || f === 'biweekly' },
-    { key: 'MONTHLY', label: 'Mensais', match: (f: string) => f === 'MONTHLY' || f === 'monthly' }
+    { 
+      key: 'DAILY', 
+      label: 'Diárias', 
+      match: (f: string) => {
+        const up = (f || '').trim().toUpperCase();
+        return up === 'DAILY';
+      }
+    },
+    { 
+      key: 'WEEKLY', 
+      label: 'Semanais', 
+      match: (f: string) => {
+        const up = (f || '').trim().toUpperCase();
+        return up === 'WEEKLY' || up === 'SEVERAL_TIMES_WEEK';
+      }
+    },
+    { 
+      key: 'BIWEEKLY', 
+      label: 'Quinzenais', 
+      match: (f: string) => {
+        const up = (f || '').trim().toUpperCase();
+        return up === 'BIWEEKLY';
+      }
+    },
+    { 
+      key: 'MONTHLY', 
+      label: 'Mensais', 
+      match: (f: string) => {
+        const up = (f || '').trim().toUpperCase();
+        return up === 'MONTHLY';
+      }
+    },
+    {
+      key: 'OTHER',
+      label: 'Outras Recorrências & Pontuais',
+      match: (f: string) => {
+        const up = (f || '').trim().toUpperCase();
+        return up !== 'DAILY' && up !== 'WEEKLY' && up !== 'SEVERAL_TIMES_WEEK' && up !== 'BIWEEKLY' && up !== 'MONTHLY';
+      }
+    }
   ];
 
   return (
@@ -252,10 +291,13 @@ export const RoutineView: React.FC = () => {
                       className="p-3.5 rounded-xl bg-surface-subtle border border-border-default hover:border-brand-primary/40 hover:shadow-xs transition cursor-pointer flex items-center justify-between gap-3 group"
                     >
                       <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="text-xs font-bold text-text-primary group-hover:text-brand-primary transition truncate">
                             {task.title}
                           </p>
+                          <span className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0">
+                            {formatExecutionTargetDisplay(task, domesticSupports).label}
+                          </span>
                           {isDone ? (
                             <span className="px-1.5 py-0.2 rounded-md bg-state-success-soft text-state-success text-[9px] font-bold shrink-0">
                               Concluída
@@ -309,6 +351,7 @@ export const RoutineView: React.FC = () => {
         <div className="space-y-6">
           {frequencies.map(freq => {
             const freqRoutines = familyTasks.filter(ft => freq.match(ft.frequency || ''));
+            if (freq.key === 'OTHER' && freqRoutines.length === 0) return null;
             return (
               <div key={freq.key} className="bg-surface-card rounded-2xl border border-border-default p-5 shadow-2xs space-y-3">
                 <div className="flex items-center justify-between pb-3 border-b border-border-default">
@@ -341,10 +384,13 @@ export const RoutineView: React.FC = () => {
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <p className={`text-xs font-bold ${isPaused ? 'text-text-muted line-through' : 'text-text-primary'}`}>
                                   {routine.customTitle || routine.custom_title || routine.name || 'Rotina'}
                                 </p>
+                                <span className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0">
+                                  {formatExecutionTargetDisplay(routine, domesticSupports).label}
+                                </span>
                                 {isPaused && (
                                   <span className="px-1.5 py-0.2 rounded-md bg-state-error-soft text-state-error text-[9px] font-bold">
                                     Pausada

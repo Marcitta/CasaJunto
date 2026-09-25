@@ -42,6 +42,7 @@ export interface SyncRoutineOccurrencesParams {
 
 export interface SyncRoutineOccurrencesResult {
   newAssignments: TaskAssignment[];
+  newlyCreatedAssignments: TaskAssignment[];
   allAssignments: TaskAssignment[];
 }
 
@@ -293,6 +294,7 @@ export class RoutineContinuityService {
 
     return {
       newAssignments: newlyCreated,
+      newlyCreatedAssignments: newlyCreated,
       allAssignments: Array.from(assignmentMap.values())
     };
   }

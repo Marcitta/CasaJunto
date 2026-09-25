@@ -262,6 +262,87 @@ export function resolveExecutionTarget(
   return 'HOUSEHOLD';
 }
 
+export interface ExecutionTargetDisplayInfo {
+  target: ExecutionTarget;
+  label: string;
+  iconEmoji: string;
+  supportName?: string;
+  isSupportInactive?: boolean;
+}
+
+/**
+ * Formatação canônica do indicador de execução para exibição nos cards (DOMESTIC-SUPPORT-1C-HF1).
+ * Linguagem 100% amigável, sem enums ou IDs técnicos:
+ * - HOUSEHOLD -> 👨‍👩‍👧‍👦 Pessoas da casa
+ * - EXTERNAL_SUPPORT + Maria -> 🧹 Maria · Ajuda externa
+ * - EXTERNAL_SUPPORT + Maria (inativa) -> 🧹 Maria · Ajuda externa · Inativa
+ * - FLEXIBLE sem preferência -> 🔄 Qualquer um
+ * - FLEXIBLE + Maria -> 🔄 Qualquer um · preferência: Maria
+ * - FLEXIBLE + Maria (inativa) -> 🔄 Qualquer um · preferência: Maria · Inativa
+ * - Legacy/ausente -> 👨‍👩‍👧‍👦 Pessoas da casa
+ */
+export function formatExecutionTargetDisplay(
+  task: Partial<FamilyTask> | Partial<Task> | null | undefined,
+  supports?: DomesticSupport[]
+): ExecutionTargetDisplayInfo {
+  const target = resolveExecutionTarget(task);
+  const supportId = task?.domesticSupportId;
+  const supportList = supports || [];
+  const support = supportId ? supportList.find(s => s.id === supportId) : undefined;
+
+  if (target === 'HOUSEHOLD') {
+    return {
+      target: 'HOUSEHOLD',
+      label: '👨‍👩‍👧‍👦 Pessoas da casa',
+      iconEmoji: '👨‍👩‍👧‍👦'
+    };
+  }
+
+  if (target === 'EXTERNAL_SUPPORT') {
+    const name = support?.name || 'Ajuda externa';
+    const isInactive = Boolean(support && !support.active);
+    let label = `🧹 ${name} · Ajuda externa`;
+    if (isInactive) {
+      label += ' · Inativa';
+    }
+    return {
+      target: 'EXTERNAL_SUPPORT',
+      label,
+      iconEmoji: '🧹',
+      supportName: support?.name,
+      isSupportInactive: isInactive
+    };
+  }
+
+  if (target === 'FLEXIBLE') {
+    if (!supportId || !support) {
+      return {
+        target: 'FLEXIBLE',
+        label: '🔄 Qualquer um',
+        iconEmoji: '🔄'
+      };
+    }
+    const isInactive = Boolean(support && !support.active);
+    let label = `🔄 Qualquer um · preferência: ${support.name}`;
+    if (isInactive) {
+      label += ' · Inativa';
+    }
+    return {
+      target: 'FLEXIBLE',
+      label,
+      iconEmoji: '🔄',
+      supportName: support.name,
+      isSupportInactive: isInactive
+    };
+  }
+
+  return {
+    target: 'HOUSEHOLD',
+    label: '👨‍👩‍👧‍👦 Pessoas da casa',
+    iconEmoji: '👨‍👩‍👧‍👦'
+  };
+}
+
 /**
  * Validação de invariantes entre FamilyTask e DomesticSupport:
  * 1. HOUSEHOLD: domesticSupportId deve ser null ou ausente.

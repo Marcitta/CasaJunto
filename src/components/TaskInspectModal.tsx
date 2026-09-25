@@ -3,6 +3,7 @@ import { X, Trash2, Calendar, User, Home, Clock, AlertTriangle, CheckCircle2, Sl
 import { useApp } from '../context/AppContext';
 import { EditFamilyTaskModal } from './EditFamilyTaskModal';
 import { getActiveMembers } from '../domain/selectors';
+import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
 
 export const TaskInspectModal: React.FC = () => {
   const { 
@@ -13,6 +14,7 @@ export const TaskInspectModal: React.FC = () => {
     setActiveTaskForReschedule,
     currentMember,
     isDemoMode,
+    domesticSupports,
     assignTaskManually 
   } = useApp();
 
@@ -212,6 +214,14 @@ export const TaskInspectModal: React.FC = () => {
               <span className="font-bold text-text-primary">{activeTaskForInspect.scheduledStart}</span>
             </div>
           )}
+          <div className="flex items-center justify-between pt-1 border-t border-border-default/50">
+            <span className="flex items-center gap-1.5 text-text-muted">
+              Quem normalmente faz:
+            </span>
+            <span className="font-bold text-text-primary">
+              {formatExecutionTargetDisplay(activeTaskForInspect, domesticSupports).label}
+            </span>
+          </div>
         </div>
 
         {/* Explainability do Motor 2.0 */}

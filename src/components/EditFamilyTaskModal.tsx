@@ -38,8 +38,7 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
     isDemoMode,
     domesticSupports,
     setCurrentView,
-    family,
-    authFamily
+    family
   } = useApp();
   const authContext = useContext(AuthContext);
   const currentMembership = authContext?.currentMembership;
@@ -152,7 +151,7 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
 
     const validation = validateFamilyTaskExecutionTarget(
       {
-        familyId: authFamily?.id || family?.id,
+        familyId: authContext?.currentFamily?.id || family?.id,
         executionTarget,
         domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
       },
