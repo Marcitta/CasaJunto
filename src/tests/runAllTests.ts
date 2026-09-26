@@ -51,6 +51,7 @@ import { runDomesticSupport1bHf1TestSuite } from './domesticSupport1bHf1.test';
 import { runDomesticSupport1cTestSuite } from './domesticSupport1c.test';
 import { runDomesticSupport1cHf1Tests } from './domesticSupport1cHf1.test';
 import { runDomesticSupport1cHf2Tests } from './domesticSupport1cHf2.test';
+import { runDomesticSupport1cHf3Tests } from './domesticSupport1cHf3.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -751,6 +752,20 @@ for (const r of ds1cHf1Results.results) {
 console.log('\n--- GRUPO 53: DOMESTIC-SUPPORT-1C-HF2 (VISIBILIDADE CATÁLOGO X ROTINA + EXECUTION TARGET NO CATÁLOGO - DS1C-HF2-01 - DS1C-HF2-10) ---');
 const ds1cHf2Results = await runDomesticSupport1cHf2Tests();
 for (const r of ds1cHf2Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 54. DOMESTIC-SUPPORT-1C-HF3: RoutineView Atualização Real + Correção Visual do CTA (10 TESTES: DS1C-HF3-01 - DS1C-HF3-10)
+console.log('\n--- GRUPO 54: DOMESTIC-SUPPORT-1C-HF3 (ROUTINEVIEW ATUALIZAÇÃO REAL + CORREÇÃO VISUAL CTA - DS1C-HF3-01 - DS1C-HF3-10) ---');
+const ds1cHf3Results = await runDomesticSupport1cHf3Tests();
+for (const r of ds1cHf3Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

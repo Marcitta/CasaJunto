@@ -25,6 +25,7 @@ import {
   ChaosSessionStatus,
   ChaosState
 } from '../../domain/models';
+import { allMasterTasks } from '../../data/tasks';
 
 export class FirestoreMappers {
   /**
@@ -300,21 +301,27 @@ export class FirestoreMappers {
   // 6. FAMILY TASK
   public static toFamilyTask(docId: string, data: any): FamilyTask {
     const now = new Date().toISOString();
-    const resolvedName = data.name || data.customTitle || data.custom_title || undefined;
-    const resolvedCustomTitle = data.customTitle || data.custom_title || data.name || undefined;
+    const tmId = data.task_master_id || data.taskMasterId || data.task_id || data.taskId || undefined;
+    const master = tmId ? allMasterTasks.find(tm => tm.id === tmId) : undefined;
+    const resolvedName = data.name || data.customTitle || data.custom_title || master?.name || undefined;
+    const resolvedCustomTitle = data.customTitle || data.custom_title || data.name || master?.name || undefined;
+    const rawFreq = data.frequency || 'DAILY';
+    const resolvedFrequency = typeof rawFreq === 'string' ? rawFreq.toUpperCase() : 'DAILY';
     return {
       id: docId,
       family_id: data.family_id || data.familyId || '',
       familyId: data.familyId || data.family_id || '',
-      task_master_id: data.task_master_id || data.taskMasterId || undefined,
-      taskMasterId: data.taskMasterId || data.task_master_id || undefined,
+      task_master_id: tmId,
+      taskMasterId: tmId,
+      task_id: tmId,
+      taskId: tmId,
       name: resolvedName,
       custom_name: data.custom_name || undefined,
       room_id: data.room_id || data.roomId || undefined,
       roomId: data.roomId || data.room_id || undefined,
       room: data.room || undefined,
-      category: data.category || undefined,
-      frequency: data.frequency || 'weekly',
+      category: data.category || master?.category || undefined,
+      frequency: resolvedFrequency,
       preferred_days: data.preferred_days || data.preferredDays || [1],
       preferredDays: data.preferredDays || data.preferred_days || [1],
       day_of_month: data.day_of_month !== undefined ? data.day_of_month : (data.dayOfMonth !== undefined ? data.dayOfMonth : undefined),
@@ -340,12 +347,20 @@ export class FirestoreMappers {
 
   public static fromFamilyTask(task: Partial<FamilyTask>): Record<string, any> {
     const now = new Date().toISOString();
-    const resolvedName = task.name || task.customTitle || task.custom_title || null;
-    const resolvedCustomTitle = task.customTitle || task.custom_title || task.name || null;
+    const tmId = (task.task_master_id || task.taskMasterId || task.task_id || task.taskId) ?? null;
+    const master = tmId ? allMasterTasks.find(tm => tm.id === tmId) : undefined;
+    const resolvedName = task.name || task.customTitle || task.custom_title || master?.name || null;
+    const resolvedCustomTitle = task.customTitle || task.custom_title || task.name || master?.name || null;
+    const rawFreq = task.frequency || 'DAILY';
+    const resolvedFrequency = typeof rawFreq === 'string' ? rawFreq.toUpperCase() : 'DAILY';
     const payload: Record<string, any> = {
       id: task.id,
       family_id: task.family_id || task.familyId || null,
-      task_master_id: (task.task_master_id || task.taskMasterId) ?? null,
+      familyId: task.familyId || task.family_id || null,
+      task_master_id: tmId,
+      taskMasterId: tmId,
+      task_id: tmId,
+      taskId: tmId,
       name: resolvedName,
       custom_name: task.custom_name || null,
       customTitle: resolvedCustomTitle,
@@ -353,18 +368,23 @@ export class FirestoreMappers {
       customDescription: task.customDescription || task.custom_description || null,
       custom_description: task.custom_description || task.customDescription || null,
       room_id: task.room_id || task.roomId || null,
-      category: task.category || null,
-      frequency: task.frequency || 'daily',
+      roomId: task.roomId || task.room_id || null,
+      category: task.category || master?.category || null,
+      frequency: resolvedFrequency,
       preferred_days: task.preferred_days || task.preferredDays || [1],
+      preferredDays: task.preferredDays || task.preferred_days || [1],
       day_of_month: task.day_of_month !== undefined ? task.day_of_month : (task.dayOfMonth !== undefined ? task.dayOfMonth : null),
+      dayOfMonth: task.dayOfMonth !== undefined ? task.dayOfMonth : (task.day_of_month !== undefined ? task.day_of_month : null),
       start_date: task.start_date || task.startDate || null,
+      startDate: task.startDate || task.start_date || null,
       preferred_time: task.preferred_time || task.preferredTime || null,
+      preferredTime: task.preferredTime || task.preferred_time || null,
       estimated_minutes: task.estimated_minutes !== undefined ? task.estimated_minutes : (task.estimatedMinutes !== undefined ? task.estimatedMinutes : null),
       active: typeof task.active === 'boolean' ? task.active : (task.active !== undefined && task.active !== null ? Boolean(task.active) : true),
       chaosEligible: task.chaosEligible === true,
       assigned_automatically: task.assigned_automatically !== undefined ? Boolean(task.assigned_automatically) : true,
-      executionTarget: task.executionTarget || 'HOUSEHOLD',
-      domesticSupportId: task.domesticSupportId !== undefined ? task.domesticSupportId : null,
+      executionTarget: task.executionTarget || (task as any).execution_target || 'HOUSEHOLD',
+      domesticSupportId: task.domesticSupportId !== undefined ? task.domesticSupportId : ((task as any).domestic_support_id !== undefined ? (task as any).domestic_support_id : null),
       createdAt: task.createdAt || task.created_at || now,
       updatedAt: now
     };

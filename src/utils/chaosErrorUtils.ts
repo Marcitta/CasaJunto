@@ -53,7 +53,16 @@ export function logStructuredChaosError(context: string, error: any, details?: R
   };
 
   lastDiagnosticError = diagnostic;
-  console.error('[ModoCaos:Diagnostic]', JSON.stringify(diagnostic, null, 2));
+  try {
+    console.error('[ModoCaos:Diagnostic]', JSON.stringify(diagnostic, (key, value) => {
+      if (key === 'src' || (typeof value === 'object' && value !== null && 'src' in value && 'i' in value)) {
+        return '[Circular]';
+      }
+      return value;
+    }, 2));
+  } catch {
+    console.error('[ModoCaos:Diagnostic]', diagnostic.context, diagnostic.code, diagnostic.message);
+  }
   return diagnostic;
 }
 

@@ -95,7 +95,7 @@ export const RoutineView: React.FC = () => {
   const handleToggleRoutineActive = async (routine: FamilyTask) => {
     if (!isAdmin) return;
     try {
-      const master = allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id));
+      const master = allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id || (routine as any).taskId));
       const routineName = routine.customTitle ?? routine.custom_title ?? routine.name ?? master?.name ?? 'Rotina';
       if (routine.active !== false) {
         await deactivateRoutine(routine.id);

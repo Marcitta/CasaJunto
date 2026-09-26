@@ -233,7 +233,7 @@ export const HouseView: React.FC = () => {
                   className="px-6 py-3 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-text-on-primary text-xs font-bold shadow-xs transition inline-flex items-center gap-2 cursor-pointer"
                 >
                   <Plus className="w-4 h-4 stroke-[2.5]" />
-                  <span>+ Adicionar Primeiro Ambiente</span>
+                  <span>Adicionar Primeiro Ambiente</span>
                 </button>
 
                 {/* Quick Add Suggestions (Pre-fill without saving) */}

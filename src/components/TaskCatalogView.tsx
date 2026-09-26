@@ -849,7 +849,7 @@ export const TaskCatalogView: React.FC = () => {
                         aria-label={`Adicionar ${displayName}`}
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>+ Adicionar</span>
+                        <span>Adicionar</span>
                       </button>
                     )
                   ) : (

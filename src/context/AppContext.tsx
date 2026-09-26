@@ -398,6 +398,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setMembers(enrichedDemo);
       setProtectedTimes(DEMO_PROTECTED_TIMES);
       setRooms(DEMO_ROOMS);
+      setFamilyTasks(demoFamilyTasks);
       setTasks(DEMO_TASKS);
       setCloudSyncStatus('demo');
       return;

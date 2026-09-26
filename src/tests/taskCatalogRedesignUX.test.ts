@@ -43,14 +43,14 @@ export async function runTaskCatalogRedesignUXTests(): Promise<TestResult[]> {
     actual: hasSubtitle ? 'Subtítulo presente' : 'Subtítulo ausente'
   });
 
-  // UXC03: CTA "+ Nova tarefa"
-  const hasNewTaskCTA = headerContent.includes('+ Nova tarefa');
+  // UXC03: CTA "Nova tarefa" (with single Plus icon, no duplicate +)
+  const hasNewTaskCTA = headerContent.includes('Nova tarefa') && !headerContent.includes('+ Nova tarefa');
   results.push({
     id: 'UXC03',
-    name: 'CTA "+ Nova tarefa" no Header',
+    name: 'CTA "Nova tarefa" no Header (sem duplicidade de +)',
     passed: hasNewTaskCTA,
-    expected: 'CTA "+ Nova tarefa" no Header',
-    actual: hasNewTaskCTA ? 'CTA presente' : 'CTA ausente'
+    expected: 'CTA "Nova tarefa" no Header com ícone único',
+    actual: hasNewTaskCTA ? 'CTA com texto único' : 'CTA ausente ou com duplicidade'
   });
 
   // UXC04: Equilibrar Carga hidden in catalog view

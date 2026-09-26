@@ -92,7 +92,7 @@ export const Header: React.FC = () => {
             className="min-h-[44px] px-3 sm:px-3.5 py-2 rounded-xl bg-brand-primary text-text-on-primary text-xs font-bold shadow-xs hover:bg-brand-primary-hover flex items-center gap-1.5 transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span className="hidden xs:inline sm:inline">+ Nova tarefa</span>
+            <span className="hidden xs:inline sm:inline">Nova tarefa</span>
           </button>
         )}
 
