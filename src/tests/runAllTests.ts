@@ -52,6 +52,7 @@ import { runDomesticSupport1cTestSuite } from './domesticSupport1c.test';
 import { runDomesticSupport1cHf1Tests } from './domesticSupport1cHf1.test';
 import { runDomesticSupport1cHf2Tests } from './domesticSupport1cHf2.test';
 import { runDomesticSupport1cHf3Tests } from './domesticSupport1cHf3.test';
+import { runDomesticSupport1cHf4Tests } from './domesticSupport1cHf4.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -766,6 +767,20 @@ for (const r of ds1cHf2Results.results) {
 console.log('\n--- GRUPO 54: DOMESTIC-SUPPORT-1C-HF3 (ROUTINEVIEW ATUALIZAÇÃO REAL + CORREÇÃO VISUAL CTA - DS1C-HF3-01 - DS1C-HF3-10) ---');
 const ds1cHf3Results = await runDomesticSupport1cHf3Tests();
 for (const r of ds1cHf3Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 55. DOMESTIC-SUPPORT-1C-HF4: RoutineView Encontrabilidade, Busca Acentuada, Ordenação e Persistência (14 TESTES: DS1C-HF4-01 - DS1C-HF4-14)
+console.log('\n--- GRUPO 55: DOMESTIC-SUPPORT-1C-HF4 (ROUTINEVIEW ENCONTRABILIDADE, BUSCA, ORDENAÇÃO E PERSISTÊNCIA - DS1C-HF4-01 - DS1C-HF4-14) ---');
+const ds1cHf4Results = await runDomesticSupport1cHf4Tests();
+for (const r of ds1cHf4Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useMemo } from 'react';
 import { 
   Calendar, 
   Repeat, 
@@ -12,7 +12,9 @@ import {
   CheckCircle2, 
   AlertCircle,
   CalendarDays,
-  ListChecks
+  ListChecks,
+  Search,
+  X
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
@@ -26,6 +28,53 @@ import { formatExecutionTargetDisplay } from '../services/domesticSupportService
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const WEEKDAYS_FULL = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+export const ROUTINE_VIEW_STORAGE_KEY = 'casajunto_routine_view_mode';
+
+let inMemoryRoutineViewMode: 'WEEKLY' | 'ROUTINES' = 'WEEKLY';
+
+export const getInitialRoutineViewMode = (): 'WEEKLY' | 'ROUTINES' => {
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      const saved = window.sessionStorage.getItem(ROUTINE_VIEW_STORAGE_KEY);
+      if (saved === 'ROUTINES' || saved === 'WEEKLY') {
+        return saved;
+      }
+    } catch {}
+  }
+  return inMemoryRoutineViewMode;
+};
+
+export const setStoredRoutineViewMode = (mode: 'WEEKLY' | 'ROUTINES'): void => {
+  inMemoryRoutineViewMode = mode;
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      window.sessionStorage.setItem(ROUTINE_VIEW_STORAGE_KEY, mode);
+    } catch {}
+  }
+};
+
+export const resetStoredRoutineViewMode = (): void => {
+  inMemoryRoutineViewMode = 'WEEKLY';
+  if (typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined') {
+    try {
+      window.sessionStorage.removeItem(ROUTINE_VIEW_STORAGE_KEY);
+    } catch {}
+  }
+};
+
+export const normalizeRoutineSearchText = (text: string): string => {
+  return (text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+};
+
+export const getRoutineDisplayName = (routine: FamilyTask): string => {
+  const master = allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id || (routine as any).taskId));
+  return routine.customTitle || routine.custom_title || routine.name || master?.name || 'Rotina';
+};
 
 export const RoutineView: React.FC = () => {
   const { 
@@ -55,11 +104,17 @@ export const RoutineView: React.FC = () => {
     currentMember?.role === 'ADMIN'
   );
 
-  const [viewMode, setViewMode] = useState<'WEEKLY' | 'ROUTINES'>('WEEKLY');
+  const [viewMode, setViewModeState] = useState<'WEEKLY' | 'ROUTINES'>(getInitialRoutineViewMode);
   const [selectedDayOffset, setSelectedDayOffset] = useState<number>(0);
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [routineSearch, setRoutineSearch] = useState<string>('');
+
+  const setViewMode = (mode: 'WEEKLY' | 'ROUTINES') => {
+    setStoredRoutineViewMode(mode);
+    setViewModeState(mode);
+  };
 
   const todayStr = selectedDate || getFamilyLocalDate(family?.timezone);
 
@@ -152,6 +207,47 @@ export const RoutineView: React.FC = () => {
       }
     }
   ];
+
+  const normalizedRoutineSearch = normalizeRoutineSearchText(routineSearch);
+
+  // Filter & Sort for each frequency group
+  const routinesByFrequency = useMemo(() => {
+    return frequencies.map(freq => {
+      // 1. Filter by frequency
+      const matchedFrequency = familyTasks.filter(ft => freq.match(ft.frequency || ''));
+      
+      // 2. Filter by search query if active
+      const filtered = matchedFrequency.filter(routine => {
+        if (!normalizedRoutineSearch) return true;
+        const master = allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id || (routine as any).taskId));
+        const customTitleNorm = normalizeRoutineSearchText(routine.customTitle || routine.custom_title || '');
+        const nameNorm = normalizeRoutineSearchText(routine.name || '');
+        const masterNameNorm = normalizeRoutineSearchText(master?.name || '');
+        return (
+          customTitleNorm.includes(normalizedRoutineSearch) ||
+          nameNorm.includes(normalizedRoutineSearch) ||
+          masterNameNorm.includes(normalizedRoutineSearch)
+        );
+      });
+
+      // 3. Sort alphabetically by resolved display name (localeCompare 'pt-BR')
+      const sorted = [...filtered].sort((a, b) => {
+        const nameA = getRoutineDisplayName(a);
+        const nameB = getRoutineDisplayName(b);
+        return nameA.localeCompare(nameB, 'pt-BR', { sensitivity: 'base' });
+      });
+
+      return {
+        ...freq,
+        routines: sorted,
+        totalCountInFreq: matchedFrequency.length
+      };
+    });
+  }, [familyTasks, normalizedRoutineSearch]);
+
+  const totalFilteredRoutinesCount = useMemo(() => {
+    return routinesByFrequency.reduce((acc, f) => acc + f.routines.length, 0);
+  }, [routinesByFrequency]);
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -350,127 +446,180 @@ export const RoutineView: React.FC = () => {
 
       {/* TAB 2: ROTINAS CADASTRADAS (FAMILY TASKS - ALL MEMBERS CAN VIEW, ADMIN CAN EDIT) */}
       {viewMode === 'ROUTINES' && (
-        <div className="space-y-6">
-          {frequencies.map(freq => {
-            const freqRoutines = familyTasks.filter(ft => freq.match(ft.frequency || ''));
-            if (freq.key === 'OTHER' && freqRoutines.length === 0) return null;
-            return (
-              <div key={freq.key} className="bg-surface-card rounded-2xl border border-border-default p-5 shadow-2xs space-y-3">
-                <div className="flex items-center justify-between pb-3 border-b border-border-default">
-                  <div className="flex items-center gap-2">
-                    <Repeat className="w-4 h-4 text-brand-primary" />
-                    <h4 className="text-xs font-bold text-text-primary uppercase tracking-wider">{freq.label}</h4>
-                    <span className="px-2 py-0.5 rounded-full bg-brand-primary-soft text-brand-primary text-[10px] font-bold">
-                      {freqRoutines.length}
-                    </span>
-                  </div>
-                </div>
+        <div className="space-y-4 w-full">
+          {/* Search Bar & Result Counter */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-card p-3 sm:p-4 rounded-2xl border border-border-default shadow-2xs">
+            <div className="relative flex-1 w-full max-w-full">
+              <Search className="w-4 h-4 text-text-muted absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                id="routine-search-input"
+                type="text"
+                value={routineSearch}
+                onChange={e => setRoutineSearch(e.target.value)}
+                placeholder="Buscar por nome da tarefa…"
+                className="w-full pl-10 pr-9 py-2 rounded-xl border border-border-default bg-surface-page text-xs sm:text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent transition-all shadow-2xs"
+                aria-label="Buscar rotina"
+              />
+              {routineSearch && (
+                <button
+                  type="button"
+                  id="btn-clear-routine-search"
+                  onClick={() => setRoutineSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-text-primary rounded-lg transition cursor-pointer"
+                  aria-label="Limpar busca de rotina"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
-                {freqRoutines.length === 0 ? (
-                  <p className="text-xs text-text-muted py-2">Nenhuma rotina configurada para esta frequência.</p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {freqRoutines.map(routine => {
-                      const master = allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id || (routine as any).taskId));
-                      const displayName = routine.customTitle || routine.custom_title || routine.name || master?.name || 'Rotina';
-                      const room = rooms.find(r => r.id === (routine.room_id || routine.roomId)) || (routine.room ? { id: routine.room, name: routine.room } as any : undefined);
-                      const isPaused = routine.active === false;
-                      const preferredDays = routine.preferred_days || routine.preferredDays || [];
+            <div className="text-right shrink-0">
+              {routineSearch.trim() ? (
+                <span id="routines-filtered-count" className="text-xs font-bold text-brand-primary">
+                  {totalFilteredRoutinesCount} de {familyTasks.length} {familyTasks.length === 1 ? 'rotina' : 'rotinas'}
+                </span>
+              ) : (
+                <span id="routines-total-count" className="text-xs text-text-muted font-medium">
+                  {familyTasks.length} {familyTasks.length === 1 ? 'rotina cadastrada' : 'rotinas cadastradas'}
+                </span>
+              )}
+            </div>
+          </div>
 
-                      return (
-                        <div 
-                          key={routine.id} 
-                          className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition ${
-                            isPaused 
-                              ? 'bg-surface-card border-border-default opacity-60' 
-                              : 'bg-surface-subtle border-border-default hover:border-brand-primary/40'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className={`text-xs font-bold ${isPaused ? 'text-text-muted line-through' : 'text-text-primary'}`}>
-                                  {displayName}
-                                </p>
-                                <span className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0">
-                                  {formatExecutionTargetDisplay(routine, domesticSupports).label}
-                                </span>
-                                {isPaused && (
-                                  <span className="px-1.5 py-0.2 rounded-md bg-state-error-soft text-state-error text-[9px] font-bold">
-                                    Pausada
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
-                                {room && (
-                                  <span className="flex items-center gap-1">
-                                    <Home className="w-3 h-3" />
-                                    {room.name}
-                                  </span>
-                                )}
-                                <span>•</span>
-                                <span className="flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />
-                                  {routine.preferred_time || routine.preferredTime || '08:00'} ({routine.estimated_minutes || 20}m)
-                                </span>
-                              </div>
-                            </div>
+          {/* Search Empty State */}
+          {routineSearch.trim() && totalFilteredRoutinesCount === 0 ? (
+            <div
+              id="routines-search-empty-state"
+              className="p-8 text-center bg-surface-card rounded-2xl border border-border-default space-y-1 shadow-2xs"
+            >
+              <p className="text-sm font-bold text-text-primary">Nenhuma rotina encontrada.</p>
+              <p className="text-xs text-text-muted">Tente buscar por outro nome.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {routinesByFrequency.map(freq => {
+                if (freq.key === 'OTHER' && freq.routines.length === 0) return null;
+                if (routineSearch.trim() && freq.routines.length === 0) return null;
 
-                            {isAdmin && (
-                              <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                  onClick={() => setEditingRoutineId(routine.id)}
-                                  className="p-1.5 rounded-lg text-text-muted hover:text-brand-primary hover:bg-surface-subtle transition cursor-pointer"
-                                  title="Editar tarefa da casa"
-                                >
-                                  <Sliders className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleToggleRoutineActive(routine)}
-                                  className={`p-1.5 rounded-lg transition cursor-pointer ${
-                                    isPaused 
-                                      ? 'text-state-success hover:bg-state-success-soft' 
-                                      : 'text-text-muted hover:text-state-warning hover:bg-state-warning-soft'
-                                  }`}
-                                  title={isPaused ? 'Reativar rotina' : 'Pausar rotina'}
-                                >
-                                  {isPaused ? <PlayCircle className="w-3.5 h-3.5" /> : <PauseCircle className="w-3.5 h-3.5" />}
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                return (
+                  <div key={freq.key} className="bg-surface-card rounded-2xl border border-border-default p-4 sm:p-5 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between pb-3 border-b border-border-default">
+                      <div className="flex items-center gap-2">
+                        <Repeat className="w-4 h-4 text-brand-primary" />
+                        <h4 className="text-xs font-bold text-text-primary uppercase tracking-wider">{freq.label}</h4>
+                        <span className="px-2 py-0.5 rounded-full bg-brand-primary-soft text-brand-primary text-[10px] font-bold">
+                          {freq.routines.length}
+                        </span>
+                      </div>
+                    </div>
 
-                          {/* Se for semanal, mostra os dias da semana ativos */}
-                          {(freq.key === 'WEEKLY' || freq.key === 'BIWEEKLY') && (
-                            <div className="pt-2 border-t border-border-default/60 flex items-center justify-between text-[10px]">
-                              <span className="text-text-muted font-medium">Dias ativos:</span>
-                              <div className="flex items-center gap-1">
-                                {WEEKDAYS.map((dName, idx) => {
-                                  const isActiveDay = preferredDays.includes(idx);
-                                  return (
-                                    <span
-                                      key={idx}
-                                      className={`px-1.5 py-0.2 rounded-md text-[9px] font-bold ${
-                                        isActiveDay
-                                          ? 'bg-brand-primary-soft text-brand-primary'
-                                          : 'text-text-muted/40'
-                                      }`}
-                                    >
-                                      {dName}
+                    {freq.routines.length === 0 ? (
+                      <p className="text-xs text-text-muted py-2">Nenhuma rotina configurada para esta frequência.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {freq.routines.map(routine => {
+                          const displayName = getRoutineDisplayName(routine);
+                          const room = rooms.find(r => r.id === (routine.room_id || routine.roomId)) || (routine.room ? { id: routine.room, name: routine.room } as any : undefined);
+                          const isPaused = routine.active === false;
+                          const preferredDays = routine.preferred_days || routine.preferredDays || [];
+
+                          return (
+                            <div 
+                              key={routine.id} 
+                              id={`routine-card-${routine.id}`}
+                              className={`p-4 rounded-xl border flex flex-col justify-between gap-3 transition ${
+                                isPaused 
+                                  ? 'bg-surface-card border-border-default opacity-60' 
+                                  : 'bg-surface-subtle border-border-default hover:border-brand-primary/40'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className={`text-xs font-bold ${isPaused ? 'text-text-muted line-through' : 'text-text-primary'}`}>
+                                      {displayName}
+                                    </p>
+                                    <span className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0">
+                                      {formatExecutionTargetDisplay(routine, domesticSupports).label}
                                     </span>
-                                  );
-                                })}
+                                    {isPaused && (
+                                      <span className="px-1.5 py-0.2 rounded-md bg-state-error-soft text-state-error text-[9px] font-bold">
+                                        Pausada
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
+                                    {room && (
+                                      <span className="flex items-center gap-1">
+                                        <Home className="w-3 h-3" />
+                                        {room.name}
+                                      </span>
+                                    )}
+                                    <span>•</span>
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      {routine.preferred_time || routine.preferredTime || '08:00'} ({routine.estimated_minutes || 20}m)
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {isAdmin && (
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      onClick={() => setEditingRoutineId(routine.id)}
+                                      className="p-1.5 rounded-lg text-text-muted hover:text-brand-primary hover:bg-surface-subtle transition cursor-pointer"
+                                      title="Editar tarefa da casa"
+                                    >
+                                      <Sliders className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleToggleRoutineActive(routine)}
+                                      className={`p-1.5 rounded-lg transition cursor-pointer ${
+                                        isPaused 
+                                          ? 'text-state-success hover:bg-state-success-soft' 
+                                          : 'text-text-muted hover:text-state-warning hover:bg-state-warning-soft'
+                                      }`}
+                                      title={isPaused ? 'Reativar rotina' : 'Pausar rotina'}
+                                    >
+                                      {isPaused ? <PlayCircle className="w-3.5 h-3.5" /> : <PauseCircle className="w-3.5 h-3.5" />}
+                                    </button>
+                                  </div>
+                                )}
                               </div>
+
+                              {/* Se for semanal, mostra os dias da semana ativos */}
+                              {(freq.key === 'WEEKLY' || freq.key === 'BIWEEKLY') && (
+                                <div className="pt-2 border-t border-border-default/60 flex items-center justify-between text-[10px]">
+                                  <span className="text-text-muted font-medium">Dias ativos:</span>
+                                  <div className="flex items-center gap-1">
+                                    {WEEKDAYS.map((dName, idx) => {
+                                      const isActiveDay = preferredDays.includes(idx);
+                                      return (
+                                        <span
+                                          key={idx}
+                                          className={`px-1.5 py-0.2 rounded-md text-[9px] font-bold ${
+                                            isActiveDay
+                                              ? 'bg-brand-primary-soft text-brand-primary'
+                                              : 'text-text-muted/40'
+                                          }`}
+                                        >
+                                          {dName}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

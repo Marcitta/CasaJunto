@@ -2,6 +2,45 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function() {
+        if (typeof JSON !== 'undefined' && typeof JSON.stringify === 'function') {
+          var originalStringify = JSON.stringify;
+          var safeStringify = function(value, replacer, space) {
+            if (value === undefined) return undefined;
+            var seen = new WeakSet();
+            var safeReplacer = function(key, val) {
+              if (typeof val === 'object' && val !== null) {
+                if (seen.has(val)) return '[Circular]';
+                seen.add(val);
+              }
+              if (typeof replacer === 'function') return replacer(key, val);
+              return val;
+            };
+            try {
+              if (Array.isArray(replacer)) {
+                return originalStringify.call(JSON, value, replacer, space);
+              }
+              return originalStringify.call(JSON, value, replacer ? function(k, v) {
+                if (typeof v === 'object' && v !== null) {
+                  if (seen.has(v)) return '[Circular]';
+                  seen.add(v);
+                }
+                return replacer(k, v);
+              } : safeReplacer, space);
+            } catch (err) {
+              try {
+                return originalStringify.call(JSON, value, safeReplacer, space);
+              } catch (e2) {
+                return '"[Unserializable]"';
+              }
+            }
+          };
+          safeStringify.__safe_circular_guarded = true;
+          JSON.stringify = safeStringify;
+        }
+      })();
+    </script>
     <link rel="icon" type="image/x-icon" href="/app-favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>CasaJunto</title>
