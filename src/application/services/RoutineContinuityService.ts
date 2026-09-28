@@ -25,6 +25,7 @@ import {
   getFamilyLocalDate,
   getRollingDateHorizon,
   addDaysToDate,
+  addMinutesToTimeString,
   DEFAULT_TIMEZONE
 } from '../../domain/utils/dateTimeUtils';
 import { db } from '../../infrastructure/firebase/firebase';
@@ -450,10 +451,79 @@ export class RoutineContinuityService {
   }
 
   /**
-   * Atualização de uma rotina existente (FamilyTask).
+   * Criação pontual de uma rotina (FamilyTask) e geração imediata de suas ocorrências no horizonte de 15 dias.
+   * - Gera ocorrências faltantes via RoutineGenerator.generateMissingOccurrences.
+   * - Persiste atômica e idempotentemente no Firestore.
+   * - member_id = '', is_unassigned = true, status = 'SCHEDULED' (GERAR ≠ DISTRIBUIR).
+   */
+  public static async createRoutine(params: {
+    familyId: string;
+    routine: FamilyTask;
+    existingAssignments: TaskAssignment[];
+    isDemoMode?: boolean;
+    timezone?: string;
+  }): Promise<{
+    createdRoutine: FamilyTask;
+    newAssignments: TaskAssignment[];
+    allAssignments: TaskAssignment[];
+  }> {
+    const {
+      familyId,
+      routine,
+      existingAssignments,
+      isDemoMode = false,
+      timezone = DEFAULT_TIMEZONE
+    } = params;
+
+    const today = getFamilyLocalDate(timezone);
+    const horizonDates = getRollingDateHorizon(today, 15);
+    const assignmentMap = new Map<string, TaskAssignment>();
+
+    for (const asg of existingAssignments) {
+      assignmentMap.set(asg.id, { ...asg });
+    }
+
+    const missing = RoutineGenerator.generateMissingOccurrences({
+      routine,
+      familyId,
+      horizonDates,
+      existingOccurrences: Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED'),
+      durationMinutes: routine.estimated_minutes || 20
+    });
+
+    const newAssignments: TaskAssignment[] = [];
+    for (const occ of missing) {
+      if (!assignmentMap.has(occ.id)) {
+        assignmentMap.set(occ.id, occ);
+        newAssignments.push(occ);
+      }
+    }
+
+    if (!isDemoMode && db && familyId) {
+      const routineRef = doc(db, 'families', familyId, 'familyTasks', routine.id);
+      await setDoc(routineRef, FirestoreMappers.fromFamilyTask(routine));
+
+      for (const occ of newAssignments) {
+        await this.createOccurrenceIfAbsent(familyId, occ, false);
+      }
+    }
+
+    return {
+      createdRoutine: routine,
+      newAssignments,
+      allAssignments: Array.from(assignmentMap.values())
+    };
+  }
+
+  /**
+   * Atualização de uma rotina existente (FamilyTask) (ROUTINE-CONTINUITY-HF1).
    * - Atualiza a definição da rotina.
-   * - Atualiza ocorrências PENDENTES (SCHEDULED) de hoje em diante.
-   * - NUNCA altera ocorrências COMPLETED ou IN_PROGRESS.
+   * - Cancela ocorrências que deixaram de ser válidas sob o novo cronograma.
+   * - Restaura ocorrências canceladas que voltaram a ser válidas.
+   * - Atualiza ocorrências PENDENTES/SCHEDULED válidas com novos horários e cômodo.
+   * - NUNCA altera ocorrências COMPLETED, DONE ou IN_PROGRESS.
+   * - Calcula e gera atômica e idempotentemente novas ocorrências faltantes no horizonte de 15 dias.
+   * - Nascem com member_id = '', is_unassigned = true, status = 'SCHEDULED' (GERAR ≠ DISTRIBUIR).
    */
   public static async updateRoutine(params: {
     familyId: string;
@@ -466,6 +536,8 @@ export class RoutineContinuityService {
   }): Promise<{
     updatedRoutine: FamilyTask;
     affectedAssignments: TaskAssignment[];
+    newAssignments: TaskAssignment[];
+    allAssignments: TaskAssignment[];
   }> {
     const {
       familyId,
@@ -491,35 +563,95 @@ export class RoutineContinuityService {
     };
 
     const today = getFamilyLocalDate(timezone);
+    const horizonDates = getRollingDateHorizon(today, 15);
     const affectedAssignments: TaskAssignment[] = [];
+    const assignmentMap = new Map<string, TaskAssignment>();
 
     for (const asg of existingAssignments) {
+      assignmentMap.set(asg.id, { ...asg });
+    }
+
+    const targetTmId = updatedRoutine.task_master_id || (updatedRoutine as any).taskMasterId || (updatedRoutine as any).task_id;
+
+    for (const asg of existingAssignments) {
+      const asgFtId = asg.family_task_id || (asg as any).familyTaskId;
+      const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate || '';
+      const asgTmId = asg.task_id || (asg as any).taskMasterId;
+
+      const isMatch = asgFtId === routineId || asg.id.startsWith(`${routineId}_`) || (targetTmId && asgTmId === targetTmId);
+
       // Afeta apenas ocorrências desta rotina a partir de hoje
-      if (asg.family_task_id === routineId && asg.scheduled_date >= today) {
-        // NUNCA mutar ocorrências COMPLETED ou IN_PROGRESS
+      if (isMatch && asgDate >= today) {
+        // NUNCA mutar ocorrências COMPLETED, DONE ou IN_PROGRESS (preservar histórico e conclusões)
         if (asg.status === 'COMPLETED' || asg.status === 'DONE' || asg.status === 'IN_PROGRESS') {
           continue;
         }
 
-        if (asg.status === 'SCHEDULED') {
+        if (asg.status === 'SCHEDULED' || asg.status === 'PENDING') {
           // Se a data não é mais válida sob a nova definição, cancela
-          const isValidDate = RoutineGenerator.shouldOccurOnDate(updatedRoutine, asg.scheduled_date);
+          const isValidDate = RoutineGenerator.shouldOccurOnDate(updatedRoutine, asgDate);
           if (!isValidDate) {
             const cancelled: TaskAssignment = {
               ...asg,
               status: 'CANCELLED'
             };
+            assignmentMap.set(asg.id, cancelled);
             affectedAssignments.push(cancelled);
           } else {
             // Atualiza horários e cômodo
             const updated: TaskAssignment = {
               ...asg,
               room_id: updatedRoutine.room_id || updatedRoutine.roomId || asg.room_id,
-              scheduled_start: updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start
+              scheduled_start: updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start,
+              scheduled_end: addMinutesToTimeString(
+                updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start || '09:00',
+                updatedRoutine.estimated_minutes || 20
+              )
             };
+            assignmentMap.set(asg.id, updated);
             affectedAssignments.push(updated);
           }
+        } else if (asg.status === 'CANCELLED') {
+          // Se estava cancelada mas voltou a ser válida sob a nova definição, restaura para SCHEDULED
+          const isValidDate = RoutineGenerator.shouldOccurOnDate(updatedRoutine, asgDate);
+          if (isValidDate) {
+            const restored: TaskAssignment = {
+              ...asg,
+              family_task_id: routineId,
+              task_id: updatedRoutine.task_master_id || updatedRoutine.taskMasterId || updatedRoutine.id,
+              scheduled_date: asgDate,
+              status: 'SCHEDULED',
+              is_unassigned: true,
+              member_id: '',
+              room_id: updatedRoutine.room_id || updatedRoutine.roomId || asg.room_id,
+              scheduled_start: updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start,
+              scheduled_end: addMinutesToTimeString(
+                updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start || '09:00',
+                updatedRoutine.estimated_minutes || 20
+              )
+            };
+            assignmentMap.set(asg.id, restored);
+            affectedAssignments.push(restored);
+          }
         }
+      }
+    }
+
+    // Calcula ocorrências faltantes no horizonte de 15 dias a partir de hoje
+    const nonCancelled = Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED');
+    const missing = RoutineGenerator.generateMissingOccurrences({
+      routine: updatedRoutine,
+      familyId,
+      horizonDates,
+      existingOccurrences: nonCancelled,
+      durationMinutes: updatedRoutine.estimated_minutes || 20
+    });
+
+    const newAssignments: TaskAssignment[] = [];
+    for (const occ of missing) {
+      if (!assignmentMap.has(occ.id)) {
+        assignmentMap.set(occ.id, occ);
+        newAssignments.push(occ);
       }
     }
 
@@ -536,9 +668,18 @@ export class RoutineContinuityService {
         }
         await batch.commit();
       }
+
+      for (const occ of newAssignments) {
+        await this.createOccurrenceIfAbsent(familyId, occ, false);
+      }
     }
 
-    return { updatedRoutine, affectedAssignments };
+    return {
+      updatedRoutine,
+      affectedAssignments,
+      newAssignments,
+      allAssignments: Array.from(assignmentMap.values())
+    };
   }
 
   /**
@@ -671,6 +812,7 @@ export class RoutineContinuityService {
     reactivatedRoutine: FamilyTask;
     restoredAssignments: TaskAssignment[];
     newAssignments: TaskAssignment[];
+    allAssignments: TaskAssignment[];
   }> {
     const {
       familyId,
@@ -732,7 +874,7 @@ export class RoutineContinuityService {
       routine: reactivatedRoutine,
       familyId,
       horizonDates,
-      existingOccurrences: Array.from(assignmentMap.values())
+      existingOccurrences: Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED')
     });
 
     const newAssignments: TaskAssignment[] = [];
@@ -758,6 +900,6 @@ export class RoutineContinuityService {
       await batch.commit();
     }
 
-    return { reactivatedRoutine, restoredAssignments, newAssignments };
+    return { reactivatedRoutine, restoredAssignments, newAssignments, allAssignments: Array.from(assignmentMap.values()) };
   }
 }

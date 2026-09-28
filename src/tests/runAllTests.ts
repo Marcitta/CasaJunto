@@ -53,6 +53,7 @@ import { runDomesticSupport1cHf1Tests } from './domesticSupport1cHf1.test';
 import { runDomesticSupport1cHf2Tests } from './domesticSupport1cHf2.test';
 import { runDomesticSupport1cHf3Tests } from './domesticSupport1cHf3.test';
 import { runDomesticSupport1cHf4Tests } from './domesticSupport1cHf4.test';
+import { runRoutineContinuityHf1Tests } from './routineContinuityHf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -781,6 +782,20 @@ for (const r of ds1cHf3Results.results) {
 console.log('\n--- GRUPO 55: DOMESTIC-SUPPORT-1C-HF4 (ROUTINEVIEW ENCONTRABILIDADE, BUSCA, ORDENAÇÃO E PERSISTÊNCIA - DS1C-HF4-01 - DS1C-HF4-14) ---');
 const ds1cHf4Results = await runDomesticSupport1cHf4Tests();
 for (const r of ds1cHf4Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 56. ROUTINE-CONTINUITY-HF1: Gerar ocorrências faltantes após criação/alteração de rotina (10 TESTES: RC-HF1-01 - RC-HF1-10)
+console.log('\n--- GRUPO 56: ROUTINE-CONTINUITY-HF1 (GERAR OCORRÊNCIAS FALTANTES APÓS CRIAÇÃO/ALTERAÇÃO DE ROTINA - RC-HF1-01 - RC-HF1-10) ---');
+const rcHf1Results = await runRoutineContinuityHf1Tests();
+for (const r of rcHf1Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
