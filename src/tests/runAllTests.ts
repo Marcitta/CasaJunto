@@ -55,6 +55,7 @@ import { runDomesticSupport1cHf3Tests } from './domesticSupport1cHf3.test';
 import { runDomesticSupport1cHf4Tests } from './domesticSupport1cHf4.test';
 import { runDomesticSupport1cHf5Tests } from './domesticSupport1cHf5.test';
 import { runRoutineContinuityHf1Tests } from './routineContinuityHf1.test';
+import { runRoutineContinuityHf2Tests } from './routineContinuityHf2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -811,6 +812,20 @@ for (const r of rcHf1Results.results) {
 console.log('\n--- GRUPO 57: DOMESTIC-SUPPORT-1C-HF5 (CANONICAL OCCURRENCE IDENTITY & BATCH CLASSIFICATION - DS1C-HF5-01 - DS1C-HF5-17) ---');
 const ds1cHf5Results = await runDomesticSupport1cHf5Tests();
 for (const r of ds1cHf5Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 58. ROUTINE-CONTINUITY-HF2: Unificar identidade canônica de ocorrência e eliminar pipeline paralelo de batchAddRoutines (15 TESTES: RC-HF2-01 - RC-HF2-15)
+console.log('\n--- GRUPO 58: ROUTINE-CONTINUITY-HF2 (UNIFICAR IDENTIDADE CANÔNICA DE OCORRÊNCIA E ELIMINAR PIPELINE PARALELO - RC-HF2-01 - RC-HF2-15) ---');
+const rcHf2Results = await runRoutineContinuityHf2Tests();
+for (const r of rcHf2Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

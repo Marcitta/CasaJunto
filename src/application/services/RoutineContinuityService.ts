@@ -167,7 +167,8 @@ export class RoutineContinuityService {
       const tmId = asg.task_id || (asg as any).taskMasterId;
 
       const canonicalKey = ftId && asgDate ? `${ftId}_${asgDate}` : null;
-      const tmDateKey = tmId && asgDate ? `${tmId}_${asgDate}` : null;
+      // Fallback legado baseado em task_id: só aplicável quando NÃO houver family_task_id
+      const tmDateKey = !ftId && tmId && asgDate ? `${tmId}_${asgDate}` : null;
 
       let existingId = canonicalKey ? occurrenceKeyToId.get(canonicalKey) : undefined;
       if (!existingId && tmDateKey) {
@@ -220,7 +221,7 @@ export class RoutineContinuityService {
         const isInactive = !isLinkedToActiveRoutine && (
           (ftId && inactiveRoutineIds.has(ftId)) ||
           Array.from(inactiveRoutineIds).some(rId => asg.id.startsWith(`${rId}_`)) ||
-          (tmId && inactiveTaskMasterIds.has(tmId))
+          (!ftId && tmId && inactiveTaskMasterIds.has(tmId))
         );
 
         if (isInactive && asgDate >= today) {
@@ -250,17 +251,17 @@ export class RoutineContinuityService {
     const newlyCreated: TaskAssignment[] = [];
     const activeRoutines = routines.filter(r => r.active !== false);
 
-    // HOTFIX-DUP-1: Consolidar activeRoutines para que apenas uma rotina canônica por task_master_id gere ocorrências
+    // RC-HF2: Cada FamilyTask ativa deve gerar suas ocorrências independentemente.
+    // Deduplicação de rotinas na entrada exclusivamente por FamilyTask.id (evita a MESMA FamilyTask duplicada na lista).
     const canonicalActiveRoutines: FamilyTask[] = [];
-    const seenActiveTmIds = new Set<string>();
+    const seenRoutineIds = new Set<string>();
     for (const r of activeRoutines) {
-      const tmId = r.task_master_id || (r as any).taskMasterId || (r as any).task_id || (r as any).taskId;
-      if (tmId) {
-        if (seenActiveTmIds.has(tmId)) {
-          // Já existe uma rotina ativa canônica para este task_master_id
+      const rId = r.id || (r as any).routineId || (r as any).familyTaskId;
+      if (rId) {
+        if (seenRoutineIds.has(rId)) {
           continue;
         }
-        seenActiveTmIds.add(tmId);
+        seenRoutineIds.add(rId);
       }
       canonicalActiveRoutines.push(r);
     }
@@ -281,6 +282,9 @@ export class RoutineContinuityService {
             if (created) {
               assignmentMap.set(occ.id, occ);
               newlyCreated.push(occ);
+            } else {
+              // Se já existia atomicamente no Firestore durante corrida, mantém no mapa
+              assignmentMap.set(occ.id, occ);
             }
           } else {
             if (inMemoryStore) {
@@ -578,7 +582,7 @@ export class RoutineContinuityService {
       const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate || '';
       const asgTmId = asg.task_id || (asg as any).taskMasterId;
 
-      const isMatch = asgFtId === routineId || asg.id.startsWith(`${routineId}_`) || (targetTmId && asgTmId === targetTmId);
+      const isMatch = asgFtId === routineId || asg.id.startsWith(`${routineId}_`) || (!asgFtId && targetTmId && asgTmId === targetTmId);
 
       // Afeta apenas ocorrências desta rotina a partir de hoje
       if (isMatch && asgDate >= today) {
@@ -732,7 +736,7 @@ export class RoutineContinuityService {
       const matches = 
         asgFtId === routineId || 
         asg.id.startsWith(`${routineId}_`) ||
-        (targetTmId && asgTmId === targetTmId);
+        (!asgFtId && targetTmId && asgTmId === targetTmId);
 
       if (matches && asgDate && asgDate >= today) {
         // COMPLETED e IN_PROGRESS são estritamente preservados
@@ -853,7 +857,7 @@ export class RoutineContinuityService {
       const matches = 
         asgFtId === routineId || 
         asg.id.startsWith(`${routineId}_`) ||
-        (targetTmId && asgTmId === targetTmId);
+        (!asgFtId && targetTmId && asgTmId === targetTmId);
 
       if (matches && asgDate && asgDate >= today && asg.status === 'CANCELLED') {
         if (RoutineGenerator.shouldOccurOnDate(reactivatedRoutine, asgDate)) {

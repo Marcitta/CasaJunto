@@ -177,7 +177,7 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
     assert(missing.length === 0, 'DU05: RoutineGenerator pula geração quando já existe ocorrência para family_task_id na data');
   }
 
-  // DU06: RoutineGenerator.generateMissingOccurrences skips if date already has occurrence for same task_master_id across routines
+  // DU06: RoutineGenerator.generateMissingOccurrences NÃO bloqueia geração para FamilyTask diferente com mesmo TaskMaster (RC-HF2)
   {
     const routine6: FamilyTask = {
       id: 'ft-6',
@@ -202,10 +202,10 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
       horizonDates: [todayStr],
       existingOccurrences: [existingOccFromFt5]
     });
-    assert(missing.length === 0, 'DU06: RoutineGenerator pula geração quando já existe ocorrência para task_master_id em outra rotina na mesma data');
+    assert(missing.length === 1, 'DU06: RoutineGenerator gera ocorrência para FamilyTask diferente mesmo compartilhando task_master_id (RC-HF2)');
   }
 
-  // DU07: syncRollingRoutines does not generate duplicate occurrences when multiple active routines point to same TaskMaster
+  // DU07: syncRollingRoutines processa FamilyTasks independentes com mesmo TaskMaster gerando ocorrências para cada uma (RC-HF2)
   {
     const routine5: FamilyTask = {
       id: 'ft-5',
@@ -232,7 +232,7 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
     const pet2OccsForToday = syncRes.allAssignments.filter(
       a => (a.task_id === 'pet-2' || a.family_task_id === 'ft-5' || a.family_task_id === 'ft-6') && a.scheduled_date === todayStr
     );
-    assert(pet2OccsForToday.length === 1, 'DU07: syncRollingRoutines consolida rotinas ativas duplicadas e gera estritamente 1 ocorrência');
+    assert(pet2OccsForToday.length === 2, 'DU07: syncRollingRoutines processa rotinas distintas gerando ocorrências independentes (RC-HF2)');
   }
 
   // DU08: syncRollingRoutines deduplicates existing assignments with same family_task_id + scheduled_date keeping higher priority
@@ -278,7 +278,7 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
     assert(pet2Today.length === 1 && pet2Today[0].status === 'COMPLETED', 'DU08: syncRollingRoutines deduplica ocorrências existentes preservando a com maior prioridade (COMPLETED)');
   }
 
-  // DU09: syncRollingRoutines deduplicates existing assignments with same task_master_id + scheduled_date
+  // DU09: syncRollingRoutines deduplica tarefas legadas sem family_task_id para mesmo task_master_id e data
   {
     const routine5: FamilyTask = {
       id: 'ft-5',
@@ -290,7 +290,6 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
     const asg1: TaskAssignment = {
       id: 'asg-demo-05',
       family_id: testFamily.id,
-      family_task_id: 'ft-5',
       task_id: 'pet-2',
       member_id: 'usr-pedro',
       scheduled_date: todayStr,
@@ -300,7 +299,6 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
     const asg2: TaskAssignment = {
       id: 'asg-6',
       family_id: testFamily.id,
-      family_task_id: 'ft-6',
       task_id: 'pet-2',
       member_id: 'usr-pedro',
       scheduled_date: todayStr,
@@ -316,10 +314,10 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
       isDemoMode: true
     });
     const pet2Today = syncRes.allAssignments.filter(a => a.task_id === 'pet-2' && a.scheduled_date === todayStr);
-    assert(pet2Today.length === 1, 'DU09: syncRollingRoutines deduplica tarefas existentes de mesmo task_master_id e data para 1 atribuição canônica');
+    assert(pet2Today.length === 1, 'DU09: syncRollingRoutines deduplica tarefas legadas sem family_task_id de mesmo task_master_id e data para 1 atribuição canônica');
   }
 
-  // DU10: Trace real "Trocar e lavar a água do pet" (pet-2): syncRollingRoutines produces exactly 1 occurrence for today
+  // DU10: Trace real "Trocar e lavar a água do pet" (pet-2): syncRollingRoutines produz 2 ocorrências para rotinas distintas ft5 e ft6 (RC-HF2)
   {
     const ft5: FamilyTask = {
       id: 'ft-5',
@@ -364,7 +362,7 @@ export async function runHotfixDup1Tests(): Promise<{ passed: number; failed: nu
       isDemoMode: true
     });
     const todayOccurrences = syncRes.allAssignments.filter(a => a.task_id === 'pet-2' && a.scheduled_date === todayStr);
-    assert(todayOccurrences.length === 1, 'DU10: Trace real "Trocar e lavar a água do pet": syncRollingRoutines resulta em exatamente 1 ocorrência para hoje');
+    assert(todayOccurrences.length === 2, 'DU10: Trace real "Trocar e lavar a água do pet": syncRollingRoutines resulta em 2 ocorrências independentes (RC-HF2)');
   }
 
   // DU11: Trace real "Trocar e lavar a água do pet" (pet-2): AppContext hydration produces strictly 1 occurrence for today

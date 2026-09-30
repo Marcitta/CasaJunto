@@ -137,15 +137,19 @@ export class RoutineGenerator {
 
     const existingMap = new Map<string, TaskAssignment>();
     const existingDateRoutineSet = new Set<string>();
+    const existingLegacyTmDateSet = new Set<string>();
+
     for (const occ of existingOccurrences) {
       existingMap.set(occ.id, occ);
       const ftId = occ.family_task_id || (occ as any).familyTaskId;
-      if (ftId && occ.scheduled_date) {
-        existingDateRoutineSet.add(`${ftId}_${occ.scheduled_date}`);
+      const asgDate = occ.scheduled_date || (occ as any).scheduledDate || (occ as any).dueDate || '';
+      if (ftId && asgDate) {
+        existingDateRoutineSet.add(`${ftId}_${asgDate}`);
       }
       const occTmId = occ.task_id || (occ as any).taskMasterId;
-      if (occTmId && occ.scheduled_date) {
-        existingDateRoutineSet.add(`${occTmId}_${occ.scheduled_date}`);
+      // Fallback legado: só registra se o assignment não possuir vínculo canônico com FamilyTask
+      if (!ftId && occTmId && asgDate) {
+        existingLegacyTmDateSet.add(`${occTmId}_${asgDate}`);
       }
     }
 
@@ -161,11 +165,18 @@ export class RoutineGenerator {
       const tmId = routine.task_master_id || (routine as any).taskMasterId || (routine as any).task_id || (routine as any).taskId;
       const tmDateKey = tmId ? `${tmId}_${dateStr}` : '';
 
-      if (
-        existingMap.has(occurrenceId) ||
-        existingDateRoutineSet.has(routineDateKey) ||
-        (tmDateKey && existingDateRoutineSet.has(tmDateKey))
-      ) {
+      // Verificação primária canônica: ID determinístico ou {familyTaskId}_{scheduledDate}
+      const isAlreadyExisting = existingMap.has(occurrenceId) || existingDateRoutineSet.has(routineDateKey);
+
+      // Fallback legado baseado em task_id: só bloqueia se houver assignment legado sem family_task_id
+      // que possua exatamente o mesmo task_id na mesma data, nunca eliminando ocorrência canônica de outra FamilyTask
+      const isLegacyBlocked = !isAlreadyExisting && tmDateKey ? existingLegacyTmDateSet.has(tmDateKey) : false;
+
+      if (isAlreadyExisting || isLegacyBlocked) {
+        // Se bloqueado pelo fallback legado, consumimos para não bloquear outras FamilyTasks com mesmo task_master_id
+        if (isLegacyBlocked && tmDateKey) {
+          existingLegacyTmDateSet.delete(tmDateKey);
+        }
         // Documento já existe: REGRA CANÔNICA -> JAMAIS SOBRESCREVER OU DUPLICAR
         continue;
       }
@@ -174,9 +185,6 @@ export class RoutineGenerator {
       missing.push(newOcc);
       existingMap.set(newOcc.id, newOcc);
       existingDateRoutineSet.add(routineDateKey);
-      if (tmDateKey) {
-        existingDateRoutineSet.add(tmDateKey);
-      }
     }
 
     return missing;

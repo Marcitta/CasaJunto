@@ -335,11 +335,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * - Reutiliza mapAssignmentsToTasks garantindo estrita paridade com loadRealAssignments.
    */
   const reloadAssignments = useCallback(async (routinesOverride?: FamilyTask[]): Promise<void> => {
-    if (isDemoMode) {
-      return;
-    }
-    const currentFamId = authFamily?.id || family?.id;
-    if (!currentFamId || currentFamId === 'fam-demo' || !db) {
+    const activeFTs = routinesOverride && routinesOverride.length > 0 ? routinesOverride : familyTasks;
+    const currentFamId = authFamily?.id || family?.id || 'fam-demo';
+
+    if (isDemoMode || !db || !authFamily) {
+      // Em modo DEMO, sincroniza canonicamente em memória e hidrata usando o mapper canônico único
+      const existingOccs: TaskAssignment[] = tasks.map(t => ({
+        id: t.id,
+        family_id: t.familyId || currentFamId,
+        task_id: t.taskMasterId || t.id,
+        family_task_id: t.familyTaskId || '',
+        room_id: t.roomId || 'geral',
+        member_id: t.assignedMemberId || '',
+        scheduled_date: t.dueDate || getTodayDateString(),
+        scheduled_start: t.scheduledStart || '09:00',
+        scheduled_end: t.scheduledEnd || '09:30',
+        status: t.status === 'DONE' ? 'COMPLETED' : (t.status === 'CANCELLED' ? 'CANCELLED' : 'SCHEDULED'),
+        is_unassigned: t.isUnassigned ?? (!t.assignedMemberId),
+        assigned_reason: t.assignedReason,
+        unassigned_reason: t.unassignedReason,
+        factors: t.factors
+      }));
+
+      const syncResult = await RoutineContinuityService.syncRoutineOccurrences({
+        family: { id: currentFamId, timezone: family.timezone } as Family,
+        routines: activeFTs,
+        existingAssignments: existingOccs,
+        isDemoMode: true
+      });
+
+      const list = mapAssignmentsToTasks({
+        assignments: syncResult.allAssignments,
+        rooms,
+        familyTasks: activeFTs,
+        allMasterTasks
+      });
+
+      setTasks(list);
       return;
     }
 
@@ -359,7 +391,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rawAssignments.push(FirestoreMappers.toTaskAssignment(d.id, d.data()));
       });
 
-      const activeFTs = routinesOverride && routinesOverride.length > 0 ? routinesOverride : familyTasks;
       let syncedAssignments = rawAssignments;
       if (activeFTs.length > 0 && authFamily) {
         try {
@@ -386,7 +417,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('[AppContext.reloadAssignments] Falha ao recarregar assignments:', err);
     }
-  }, [isDemoMode, authFamily, family?.id, familyTasks, rooms]);
+  }, [isDemoMode, authFamily, family?.id, family.timezone, familyTasks, rooms, tasks]);
 
   useEffect(() => {
     let isMounted = true;
@@ -2280,75 +2311,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setFamilyTasks(currentRoutines);
 
-    // Call syncRollingRoutines to immediately generate occurrences in 15-day horizon
-    try {
-      const existingOccs: TaskAssignment[] = tasks.map(t => ({
-        id: t.id,
-        family_id: t.familyId || familyId,
-        task_id: t.taskMasterId || t.id,
-        family_task_id: t.familyTaskId || t.id,
-        room_id: t.roomId || 'geral',
-        member_id: t.assignedMemberId || '',
-        scheduled_date: t.dueDate || getTodayDateString(),
-        scheduled_start: t.scheduledStart || '09:00',
-        scheduled_end: t.scheduledEnd || '09:30',
-        status: t.status === 'DONE' ? 'COMPLETED' : (t.status === 'CANCELLED' ? 'CANCELLED' : 'SCHEDULED'),
-        is_unassigned: t.isUnassigned ?? (!t.assignedMemberId),
-        assigned_reason: t.assignedReason,
-        unassigned_reason: t.unassignedReason,
-        factors: t.factors
-      }));
+    if (!isDemoMode && db && authFamily) {
+      // 1. Busca assignments brutos atuais do Firestore
+      const asgRef = collection(db, 'families', authFamily.id, 'assignments');
+      const snap = await getDocs(asgRef);
+      const rawAssignments: TaskAssignment[] = [];
+      snap.forEach(d => {
+        rawAssignments.push(FirestoreMappers.toTaskAssignment(d.id, d.data()));
+      });
 
-      const syncResult = await RoutineContinuityService.syncRoutineOccurrences({
-        family: isDemoMode || !authFamily ? { id: familyId, timezone: family.timezone } as Family : authFamily,
+      // 2. Sincroniza canonicamente no Firestore (gera ocorrências faltantes e persiste atomicamente)
+      await RoutineContinuityService.syncRoutineOccurrences({
+        family: authFamily,
         routines: currentRoutines,
-        existingAssignments: existingOccs,
-        isDemoMode: isDemoMode || !authFamily
+        existingAssignments: rawAssignments,
+        isDemoMode: false
       });
 
-      const list: Task[] = syncResult.allAssignments.map(asg => {
-        const master = allMasterTasks.find(tm => tm.id === asg.task_id);
-        const roomObj = rooms.find(r => r.id === asg.room_id);
-        const fallbackRoomType = master?.room_type || 'geral';
-        const ft = currentRoutines.find(f => f.id === asg.family_task_id || f.id === (asg as any).familyTaskId);
-        const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
-        const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
-        return {
-          id: asg.id,
-          familyId: asg.family_id,
-          title: displayTitle,
-          description: displayDescription,
-          taskMasterId: asg.task_id,
-          familyTaskId: asg.family_task_id,
-          assignedMemberId: asg.is_unassigned ? '' : asg.member_id,
-          assigneeId: asg.is_unassigned ? '' : asg.member_id,
-          status: asg.status === 'COMPLETED' ? 'DONE' : (asg.status === 'CANCELLED' ? 'CANCELLED' : 'PENDING'),
-          dueDate: asg.scheduled_date || getTodayDateString(),
-          scheduledStart: asg.scheduled_start,
-          scheduledEnd: asg.scheduled_end,
-          assignedReason: asg.assigned_reason,
-          unassignedReason: asg.unassigned_reason,
-          isUnassigned: asg.is_unassigned,
-          factors: asg.factors,
-          frequency: (ft?.frequency as any) || 'DAILY',
-          effort: master?.effort_level ? master.effort_level * 5 : 10,
-          durationMinutes: master?.duration_minutes || 20,
-          category: master?.category || 'cleaning',
-          roomId: asg.room_id || fallbackRoomType,
-          roomName: roomObj?.name || fallbackRoomType,
-          executionTarget: ft?.executionTarget || 'HOUSEHOLD',
-          domesticSupportId: ft?.domesticSupportId ?? null,
-          completedAt: asg.completed_at,
-          completedByMemberId: asg.completed_by,
-          completedByName: asg.completed_by_name,
-          completionType: asg.completion_type,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-      });
-      setTasks(list);
-    } catch (syncErr) {
-      console.warn('Could not sync rolling routines after batch add:', syncErr);
+      // 3. Recarrega assignments do Firestore e hidrata tarefas canonicamente
+      await reloadAssignments(currentRoutines);
+    } else {
+      // Em modo DEMO: reutiliza o pipeline canônico unificado de reloadAssignments e mapAssignmentsToTasks
+      await reloadAssignments(currentRoutines);
     }
 
     return { added: addedCount, reactivated: reactivatedCount, skipped: skippedCount, failed };
