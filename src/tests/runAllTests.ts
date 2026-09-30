@@ -53,6 +53,7 @@ import { runDomesticSupport1cHf1Tests } from './domesticSupport1cHf1.test';
 import { runDomesticSupport1cHf2Tests } from './domesticSupport1cHf2.test';
 import { runDomesticSupport1cHf3Tests } from './domesticSupport1cHf3.test';
 import { runDomesticSupport1cHf4Tests } from './domesticSupport1cHf4.test';
+import { runDomesticSupport1cHf5Tests } from './domesticSupport1cHf5.test';
 import { runRoutineContinuityHf1Tests } from './routineContinuityHf1.test';
 
 console.log('================================================================');
@@ -796,6 +797,20 @@ for (const r of ds1cHf4Results.results) {
 console.log('\n--- GRUPO 56: ROUTINE-CONTINUITY-HF1 (GERAR OCORRÊNCIAS FALTANTES APÓS CRIAÇÃO/ALTERAÇÃO DE ROTINA - RC-HF1-01 - RC-HF1-10) ---');
 const rcHf1Results = await runRoutineContinuityHf1Tests();
 for (const r of rcHf1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 57. DOMESTIC-SUPPORT-1C-HF5: Corrigir identidade canônica das ocorrências + classificação no fluxo em lote (17 TESTES: DS1C-HF5-01 - DS1C-HF5-17)
+console.log('\n--- GRUPO 57: DOMESTIC-SUPPORT-1C-HF5 (CANONICAL OCCURRENCE IDENTITY & BATCH CLASSIFICATION - DS1C-HF5-01 - DS1C-HF5-17) ---');
+const ds1cHf5Results = await runDomesticSupport1cHf5Tests();
+for (const r of ds1cHf5Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

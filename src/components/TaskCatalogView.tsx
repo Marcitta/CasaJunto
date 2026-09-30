@@ -869,6 +869,7 @@ export const TaskCatalogView: React.FC = () => {
         selectedTasks={tasksForConfig}
         familyTasks={familyTasks}
         rooms={rooms}
+        domesticSupports={domesticSupports}
         onConfirm={handleConfirmBatchAdd}
         isSubmitting={isSubmitting}
       />

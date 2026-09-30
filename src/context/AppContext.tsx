@@ -26,7 +26,8 @@ import {
   createDomesticSupportEntity,
   deactivateDomesticSupportEntity,
   reactivateDomesticSupportEntity,
-  validateDomesticSupportSchedule
+  validateDomesticSupportSchedule,
+  resolveExecutionTarget
 } from '../services/domesticSupportService';
 import { ChaosSessionService } from '../services/chaosSessionService';
 import { 
@@ -191,10 +192,16 @@ export function mapAssignmentsToTasks(params: {
     const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
     const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
 
-    // HOTFIX-DUP-1: Proteção canônica de hidratação no AppContext (sem dedupe por título)
-    const canonicalKey = (asg.task_id && asg.scheduled_date) 
-      ? `${asg.task_id}_${asg.scheduled_date}` 
-      : (asg.family_task_id && asg.scheduled_date ? `${asg.family_task_id}_${asg.scheduled_date}` : asg.id);
+    // HOTFIX-DUP-1 / DS1C-HF5: Proteção canônica de hidratação no AppContext (sem dedupe por título)
+    // A identidade canônica primária da ocorrência recorrente é: {familyTaskId}_{scheduledDate}
+    // Duas FamilyTasks distintas com o mesmo TaskMaster na mesma data são ocorrências independentes e ambas sobrevivem.
+    const canonicalFtId = asg.family_task_id || (asg as any).familyTaskId;
+    const canonicalDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate;
+    const canonicalKey = (canonicalFtId && canonicalDate)
+      ? `${canonicalFtId}_${canonicalDate}`
+      : (asg.task_id && canonicalDate)
+        ? `${asg.task_id}_${canonicalDate}`
+        : asg.id;
     
     if (seenCanonicalKeys.has(canonicalKey)) {
       return;
@@ -2177,6 +2184,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const master = !isCustom ? allMasterTasks.find(tm => tm.id === (existing.task_master_id || existing.taskMasterId || item.taskMasterId)) : undefined;
           const resolvedName = item.name || existing.name || existing.customTitle || master?.name || 'Rotina';
 
+          const target = item.executionTarget ?? existing.executionTarget;
+          const resolvedTarget = resolveExecutionTarget({ executionTarget: target });
+          const resolvedSupportId = resolvedTarget === 'HOUSEHOLD'
+            ? null
+            : (item.executionTarget !== undefined
+              ? (item.domesticSupportId ?? null)
+              : (existing.domesticSupportId ?? null));
+
           // Reactivate existing FamilyTask: REUSE SAME ID!
           const reactivated: FamilyTask = {
             ...existing,
@@ -2193,8 +2208,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             dayOfMonth: item.dayOfMonth ?? existing.dayOfMonth ?? existing.day_of_month,
             preferred_time: item.preferredTime || existing.preferred_time || existing.preferredTime || '09:00',
             preferredTime: item.preferredTime || existing.preferredTime || existing.preferred_time || '09:00',
-            executionTarget: (item as any).executionTarget || existing.executionTarget || 'HOUSEHOLD',
-            domesticSupportId: (item as any).executionTarget === 'HOUSEHOLD' ? null : ((item as any).domesticSupportId ?? existing.domesticSupportId ?? null),
+            executionTarget: resolvedTarget,
+            domesticSupportId: resolvedSupportId,
             start_date: item.startDate || existing.start_date || existing.startDate || today,
             startDate: item.startDate || existing.startDate || existing.start_date || today,
             updated_at: now,
@@ -2213,6 +2228,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const master = allMasterTasks.find(tm => tm.id === item.taskMasterId);
           const isCustom = !master;
           const resolvedName = item.name || master?.name || 'Rotina';
+
+          const resolvedTarget = resolveExecutionTarget({ executionTarget: item.executionTarget });
+          const resolvedSupportId = resolvedTarget === 'HOUSEHOLD' ? null : (item.domesticSupportId ?? null);
 
           const routineId = isDemoMode || !authFamily ? `ft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : doc(collection(db, 'families', familyId, 'familyTasks')).id;
           const newRoutine: FamilyTask = {
@@ -2237,8 +2255,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             preferred_time: item.preferredTime || '09:00',
             preferredTime: item.preferredTime || '09:00',
             active: true,
-            executionTarget: (item as any).executionTarget || 'HOUSEHOLD',
-            domesticSupportId: (item as any).executionTarget === 'HOUSEHOLD' ? null : ((item as any).domesticSupportId ?? null),
+            executionTarget: resolvedTarget,
+            domesticSupportId: resolvedSupportId,
             start_date: item.startDate || today,
             startDate: item.startDate || today,
             created_at: now,

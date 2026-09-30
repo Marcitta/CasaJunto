@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, Clock, Home, Calendar, AlertCircle, Sparkles } from 'lucide-react';
 import { TaskMaster } from '../types';
-import { Room, FamilyTask, BatchAddRoutineInput } from '../types';
+import { Room, FamilyTask, BatchAddRoutineInput, ExecutionTarget, DomesticSupport } from '../types';
 import { taskCategoryLabels } from '../data/tasks';
+import { ExecutionTargetSelector } from './DomesticSupport/ExecutionTargetSelector';
+import { AppContext } from '../context/AppContext';
 
 interface BatchConfigurationModalProps {
   isOpen: boolean;
@@ -10,6 +12,8 @@ interface BatchConfigurationModalProps {
   selectedTasks: TaskMaster[];
   familyTasks: FamilyTask[];
   rooms: Room[];
+  domesticSupports?: DomesticSupport[];
+  onOpenDomesticSupport?: () => void;
   onConfirm: (configs: BatchAddRoutineInput[]) => Promise<void>;
   isSubmitting?: boolean;
 }
@@ -20,6 +24,8 @@ interface TaskConfigState {
   preferredDays: number[];
   dayOfMonth: number;
   preferredTime: string;
+  executionTarget: ExecutionTarget;
+  domesticSupportId: string | null;
   status: 'NEW' | 'REACTIVATE' | 'ALREADY_ACTIVE';
   existingRoutineId?: string;
 }
@@ -40,9 +46,24 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
   selectedTasks,
   familyTasks,
   rooms,
+  domesticSupports: propsDomesticSupports,
+  onOpenDomesticSupport,
   onConfirm,
   isSubmitting = false
 }) => {
+  const appContext = React.useContext(AppContext);
+  const domesticSupports = propsDomesticSupports || appContext?.domesticSupports || [];
+  const activeSupports = (domesticSupports || []).filter(s => s.active !== false);
+
+  const handleOpenDomesticSupport = () => {
+    if (onOpenDomesticSupport) {
+      onOpenDomesticSupport();
+    } else if (appContext?.setCurrentView) {
+      onClose();
+      appContext.setCurrentView('domestic_support');
+    }
+  };
+
   const [configs, setConfigs] = useState<Record<string, TaskConfigState>>({});
   const [globalRoomId, setGlobalRoomId] = useState<string>('');
   const [globalTime, setGlobalTime] = useState<string>('09:00');
@@ -129,12 +150,21 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
         }
       }
 
+      let initialTarget: ExecutionTarget = 'HOUSEHOLD';
+      let initialSupportId: string | null = null;
+      if (existing) {
+        initialTarget = existing.executionTarget || 'HOUSEHOLD';
+        initialSupportId = existing.domesticSupportId ?? null;
+      }
+
       initialConfigs[task.id] = {
         roomId: matchedRoomId,
         frequency: freq,
         preferredDays: days,
         dayOfMonth: dom,
         preferredTime: existing?.preferred_time || existing?.preferredTime || '09:00',
+        executionTarget: initialTarget,
+        domesticSupportId: initialSupportId,
         status,
         existingRoutineId: existing?.id
       };
@@ -195,6 +225,11 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
   const newCount = Object.values(configs).filter(c => c.status === 'NEW').length;
   const reactivateCount = Object.values(configs).filter(c => c.status === 'REACTIVATE').length;
   const alreadyActiveCount = Object.values(configs).filter(c => c.status === 'ALREADY_ACTIVE').length;
+  const tasksToCommit = selectedTasks.filter(t => configs[t.id]?.status !== 'ALREADY_ACTIVE');
+  const hasIncompleteExternal = tasksToCommit.some(task => {
+    const cfg = configs[task.id];
+    return cfg?.executionTarget === 'EXTERNAL_SUPPORT' && (!cfg.domesticSupportId || activeSupports.length === 0);
+  });
 
   const handleConfirm = async () => {
     // Validation
@@ -224,13 +259,21 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
         setValidationError(`A tarefa "${task.name}" é mensal e requer um dia do mês válido (1 a 31).`);
         return;
       }
+      if (cfg.executionTarget === 'EXTERNAL_SUPPORT') {
+        if (!cfg.domesticSupportId) {
+          setValidationError(`A tarefa "${task.name}" está definida como "Ajuda externa", mas nenhuma pessoa de apoio foi selecionada.`);
+          return;
+        }
+        const exists = activeSupports.some(s => s.id === cfg.domesticSupportId);
+        if (!exists) {
+          setValidationError(`A ajuda externa selecionada para "${task.name}" não está ativa.`);
+          return;
+        }
+      }
     }
 
     const payload: BatchAddRoutineInput[] = tasksToCommit.map(task => {
       const cfg = configs[task.id];
-      const existing = familyTasks.find(ft =>
-        (ft.task_master_id === task.id || ft.taskMasterId === task.id || ft.task_id === task.id || ft.taskId === task.id || ft.id === task.id)
-      );
       return {
         taskMasterId: task.id,
         name: task.name,
@@ -242,8 +285,8 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
         preferredTime: cfg.preferredTime || '09:00',
         durationMinutes: task.duration_minutes || 20,
         effort: task.effort_level ? task.effort_level * 5 : 10,
-        executionTarget: existing?.executionTarget || 'HOUSEHOLD',
-        domesticSupportId: existing?.domesticSupportId ?? null
+        executionTarget: cfg.executionTarget,
+        domesticSupportId: cfg.executionTarget === 'HOUSEHOLD' ? null : (cfg.domesticSupportId ?? null)
       };
     });
 
@@ -358,12 +401,14 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
         {/* Task List */}
         <div id="batch-config-task-list" className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
           {selectedTasks.map((task, index) => {
-            const cfg = configs[task.id] || {
+            const cfg: TaskConfigState = configs[task.id] || {
               roomId: '',
               frequency: 'DAILY',
               preferredDays: [1],
               dayOfMonth: 1,
               preferredTime: '09:00',
+              executionTarget: 'HOUSEHOLD',
+              domesticSupportId: null,
               status: 'NEW'
             };
             const catInfo = taskCategoryLabels[task.category] || { label: task.category, icon: '📋', color: '#5b32a3', bg: '#f4f4ec' };
@@ -548,6 +593,23 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                         />
                       </div>
                     )}
+
+                    {/* Execution Target Selector (Quem normalmente faz esta tarefa?) */}
+                    <div className="sm:col-span-3 pt-3 border-t border-border-default">
+                      <ExecutionTargetSelector
+                        executionTarget={cfg.executionTarget || 'HOUSEHOLD'}
+                        domesticSupportId={cfg.domesticSupportId}
+                        onChange={(target, supportId) => {
+                          handleUpdateConfig(task.id, {
+                            executionTarget: target,
+                            domesticSupportId: target === 'HOUSEHOLD' ? null : supportId
+                          });
+                        }}
+                        activeSupports={activeSupports}
+                        onOpenDomesticSupport={handleOpenDomesticSupport}
+                        disabled={isSubmitting}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -578,7 +640,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
               id="btn-batch-confirm-add"
               type="button"
               onClick={handleConfirm}
-              disabled={isSubmitting || newCount + reactivateCount === 0}
+              disabled={isSubmitting || newCount + reactivateCount === 0 || hasIncompleteExternal}
               className="min-h-[44px] px-5 py-2 text-sm font-semibold bg-brand-primary text-text-on-primary hover:bg-brand-primary-hover rounded-xl shadow-xs transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
             >
               {isSubmitting ? (
