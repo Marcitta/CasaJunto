@@ -43,9 +43,20 @@ export class RebalanceService {
     const fixedAssignments = ctx.existingAssignments.filter(
       a => a.status === 'COMPLETED' || a.status === 'IN_PROGRESS'
     );
-    const pendingAssignments = ctx.existingAssignments.filter(
-      a => a.status !== 'COMPLETED' && a.status !== 'IN_PROGRESS' && a.status !== 'CANCELLED'
-    );
+    // Regra de produto: EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
+    // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
+    const externalSupportAssignments = ctx.existingAssignments.filter(a => {
+      if (a.status === 'COMPLETED' || a.status === 'IN_PROGRESS' || a.status === 'CANCELLED') return false;
+      const ft = ctx.familyTasks.find(f => f.id === a.family_task_id || f.task_master_id === a.task_id);
+      return ft?.executionTarget === 'EXTERNAL_SUPPORT' || (a as any).executionTarget === 'EXTERNAL_SUPPORT';
+    });
+
+    const pendingAssignments = ctx.existingAssignments.filter(a => {
+      if (a.status === 'COMPLETED' || a.status === 'IN_PROGRESS' || a.status === 'CANCELLED') return false;
+      const ft = ctx.familyTasks.find(f => f.id === a.family_task_id || f.task_master_id === a.task_id);
+      if (ft?.executionTarget === 'EXTERNAL_SUPPORT' || (a as any).executionTarget === 'EXTERNAL_SUPPORT') return false;
+      return true;
+    });
 
     if (pendingAssignments.length === 0) {
       return {
@@ -65,7 +76,9 @@ export class RebalanceService {
         preferred_days: existingFt?.preferred_days || [ctx.dayOfWeek],
         preferred_time: a.scheduled_start || existingFt?.preferred_time,
         active: true,
-        assigned_automatically: true
+        assigned_automatically: true,
+        executionTarget: existingFt?.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: existingFt?.domesticSupportId || null
       };
     });
 
@@ -113,7 +126,7 @@ export class RebalanceService {
     // Invariante de Unicidade Canônica: 1 ocorrência tem no máximo 1 responsável
     const assignmentIdSet = new Set<string>();
     const deduplicatedCombined: TaskAssignment[] = [];
-    for (const asg of [...fixedAssignments, ...newAssignments]) {
+    for (const asg of [...fixedAssignments, ...externalSupportAssignments, ...newAssignments]) {
       if (!assignmentIdSet.has(asg.id)) {
         assignmentIdSet.add(asg.id);
         deduplicatedCombined.push(asg);

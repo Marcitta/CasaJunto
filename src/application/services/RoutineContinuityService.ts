@@ -53,6 +53,7 @@ export interface DistributeEligibleOccurrencesParams {
   members: Member[];
   protectedTimes: ProtectedTime[];
   targetDates?: string[];
+  routines?: FamilyTask[];
   isDemoMode?: boolean;
 }
 
@@ -416,11 +417,26 @@ export class RoutineContinuityService {
 
     const updatedAssignments: TaskAssignment[] = [];
     const activeMembers = getActiveMembers(members);
+    const routineMap = new Map<string, FamilyTask>();
+    if (params.routines) {
+      for (const r of params.routines) {
+        routineMap.set(r.id, r);
+      }
+    }
 
     if (activeMembers.length > 0) {
       for (const dateTarget of autoDistributionDates) {
         const unassignedForDate: TaskAssignment[] = [];
         for (const asg of assignmentMap.values()) {
+          const r = asg.family_task_id ? routineMap.get(asg.family_task_id) : undefined;
+          const execTarget = r?.executionTarget || (asg as any).executionTarget || (asg as any).execution_target || 'HOUSEHOLD';
+          // Regra de produto (ExecutionTarget):
+          // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
+          // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
+          if (execTarget === 'EXTERNAL_SUPPORT') {
+            continue;
+          }
+
           if (
             asg.scheduled_date === dateTarget &&
             (asg.status === 'SCHEDULED' || asg.status === 'PENDING') &&
@@ -433,6 +449,7 @@ export class RoutineContinuityService {
         if (unassignedForDate.length === 0) continue;
 
         const tasksToDistribute: Task[] = unassignedForDate.map(asg => {
+          const r = asg.family_task_id ? routineMap.get(asg.family_task_id) : undefined;
           return {
             id: asg.id,
             familyId: family.id,
@@ -453,6 +470,8 @@ export class RoutineContinuityService {
             effort: 10,
             frequency: 'DAILY',
             isUnassigned: true,
+            executionTarget: r?.executionTarget || (asg as any).executionTarget || 'HOUSEHOLD',
+            domesticSupportId: r?.domesticSupportId || (asg as any).domesticSupportId || null,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           };
@@ -530,6 +549,7 @@ export class RoutineContinuityService {
         assignments: genResult.allAssignments,
         members: params.members,
         protectedTimes: params.protectedTimes || [],
+        routines: params.routines,
         isDemoMode: params.isDemoMode
       });
       updatedAssignments = distResult.updatedAssignments;

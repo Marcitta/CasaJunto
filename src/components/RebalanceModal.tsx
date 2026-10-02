@@ -55,9 +55,14 @@ export const RebalanceModal: React.FC = () => {
       const taskDate = t.dueDate || selectedDate;
       if (taskDate !== selectedDate) return false;
       if (t.status === 'CANCELLED' || (t.status as string) === 'CANCELLED') return false;
+      // Regra de produto (ExecutionTarget):
+      // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
+      // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
+      if (t.executionTarget === 'EXTERNAL_SUPPORT') return false;
       if (t.familyTaskId && familyTasks && familyTasks.length > 0) {
         const ft = familyTasks.find(f => f.id === t.familyTaskId);
         if (ft && ft.active === false) return false;
+        if (ft && ft.executionTarget === 'EXTERNAL_SUPPORT') return false;
       }
       if (seen.has(t.id)) return false;
       seen.add(t.id);

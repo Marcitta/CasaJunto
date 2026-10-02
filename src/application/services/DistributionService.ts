@@ -115,6 +115,10 @@ export class DistributionService {
     for (const task of params.tasks) {
       if ((task.status as string) === 'CANCELLED') continue;
       if ((task as any).active === false) continue;
+      // Regra de produto (ExecutionTarget):
+      // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
+      // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
+      if (task.executionTarget === 'EXTERNAL_SUPPORT') continue;
 
       // Restringe ao targetDate quando dueDate estiver preenchido
       const taskDate = task.dueDate || targetDate;
@@ -141,7 +145,9 @@ export class DistributionService {
         preferred_days: [dayOfWeek],
         preferred_time: scheduledStart,
         active: true,
-        assigned_automatically: true
+        assigned_automatically: true,
+        executionTarget: task.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: task.domesticSupportId || null
       });
 
       existingAssignments.push({

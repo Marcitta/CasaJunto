@@ -57,6 +57,7 @@ import { runDomesticSupport1cHf5Tests } from './domesticSupport1cHf5.test';
 import { runRoutineContinuityHf1Tests } from './routineContinuityHf1.test';
 import { runRoutineContinuityHf2Tests } from './routineContinuityHf2.test';
 import { runRoutineContinuityHf3Tests } from './routineContinuityHf3.test';
+import { runExecutionTargetMotorTests } from './executionTargetMotor.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -841,6 +842,20 @@ for (const r of rcHf2Results.results) {
 console.log('\n--- GRUPO 59: ROUTINE-CONTINUITY-HF3 (RECONCILIAÇÃO CANÔNICA E RESTAURAÇÃO DE CANCELLED VÁLIDAS - RC-HF3-01 - RC-HF3-12) ---');
 const rcHf3Results = await runRoutineContinuityHf3Tests();
 for (const r of rcHf3Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 60. EXECUTION-TARGET-MOTOR: Regras canônicas de HOUSEHOLD, EXTERNAL_SUPPORT e FLEXIBLE perante Motor 2.0 (6 TESTES: ETM-01 - ETM-06)
+console.log('\n--- GRUPO 60: EXECUTION-TARGET-MOTOR (DISTRIBUIÇÃO POR EXECUTION TARGET - ETM-01 - ETM-06) ---');
+const etmResults = await runExecutionTargetMotorTests();
+for (const r of etmResults.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
