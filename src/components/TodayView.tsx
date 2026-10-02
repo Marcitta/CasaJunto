@@ -14,6 +14,7 @@ import {
   isTaskFromActiveRoutine
 } from '../domain/selectors/todayProgressSelectors';
 import { selectVisibleTodayTasks } from '../domain/rbac/rolePermissions';
+import { QaDataCleanupTool } from './Admin/QaDataCleanupTool';
 
 export type TodayFilter = 'mine' | 'all' | 'available';
 
@@ -168,6 +169,9 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
   return (
     <div id="today-view-container" className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5 w-full min-w-0 overflow-x-hidden">
+      {/* Ferramenta Operacional Temporária: QA Data Cleanup (somente ADMIN em fam-croce-2026) */}
+      <QaDataCleanupTool />
+
       {/* Filtros Compactos Segmentados (Minhas | Todas | Disponíveis para Admin; Minhas | Disponíveis para Member) */}
       <div 
         id="today-filters"
