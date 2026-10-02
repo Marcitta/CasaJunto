@@ -56,6 +56,7 @@ import { runDomesticSupport1cHf4Tests } from './domesticSupport1cHf4.test';
 import { runDomesticSupport1cHf5Tests } from './domesticSupport1cHf5.test';
 import { runRoutineContinuityHf1Tests } from './routineContinuityHf1.test';
 import { runRoutineContinuityHf2Tests } from './routineContinuityHf2.test';
+import { runRoutineContinuityHf3Tests } from './routineContinuityHf3.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -826,6 +827,20 @@ for (const r of ds1cHf5Results.results) {
 console.log('\n--- GRUPO 58: ROUTINE-CONTINUITY-HF2 (UNIFICAR IDENTIDADE CANÔNICA DE OCORRÊNCIA E ELIMINAR PIPELINE PARALELO - RC-HF2-01 - RC-HF2-15) ---');
 const rcHf2Results = await runRoutineContinuityHf2Tests();
 for (const r of rcHf2Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 59. ROUTINE-CONTINUITY-HF3: Reconciliação canônica e restauração de ocorrências CANCELLED válidas (12 TESTES: RC-HF3-01 - RC-HF3-12)
+console.log('\n--- GRUPO 59: ROUTINE-CONTINUITY-HF3 (RECONCILIAÇÃO CANÔNICA E RESTAURAÇÃO DE CANCELLED VÁLIDAS - RC-HF3-01 - RC-HF3-12) ---');
+const rcHf3Results = await runRoutineContinuityHf3Tests();
+for (const r of rcHf3Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

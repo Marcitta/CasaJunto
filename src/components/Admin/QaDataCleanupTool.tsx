@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { Trash2, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, X, Database } from 'lucide-react';
 import { doc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../infrastructure/firebase/firebase';
 import { useApp } from '../../context/AppContext';
-import { useAuth } from '../../context/AuthContext';
+import { AuthContext } from '../../context/AuthContext';
 
 export const AUTHORIZED_FAMILY_ID = 'fam-croce-2026';
 
@@ -52,7 +52,8 @@ export interface PostCheckDetails {
 
 export const QaDataCleanupTool: React.FC = () => {
   const { family, currentMember, isDemoMode, reloadAssignments } = useApp();
-  const { currentUser } = useAuth();
+  const auth = useContext(AuthContext);
+  const currentUser = auth?.currentUser;
 
   const [isOpen, setIsOpen] = useState(false);
   const [isChecking, setIsChecking] = useState(false);

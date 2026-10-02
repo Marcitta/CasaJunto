@@ -10,6 +10,7 @@ import { mapAssignmentsToTasks } from '../context/AppContext';
 import { FamilyTask, TaskAssignment, Room, TaskMaster, Family } from '../types';
 import {
   DEFAULT_TIMEZONE,
+  getFamilyLocalDate,
   getRollingDateHorizon,
   getDayOfWeek
 } from '../domain/utils/dateTimeUtils';
@@ -76,12 +77,16 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
     } as TaskMaster
   ];
 
+  const horizonToday = getFamilyLocalDate(DEFAULT_TIMEZONE);
+  const rollingHorizon = getRollingDateHorizon(horizonToday, 15);
+  const defaultTargetWednesday = rollingHorizon.find(d => getDayOfWeek(d) === 3) || '2026-10-07';
+
   // RC-HF2-01: Caso real PO (2026-09-30): FamilyTasks A (HOUSEHOLD), B (FLEXIBLE), C (EXTERNAL_SUPPORT) geram {familyTaskId}_2026-09-30
   await record('RC-HF2-01', 'Caso real PO (2026-09-30): FamilyTasks A, B, C geram ocorrências determinísticas canônicas', async () => {
-    const targetDate = '2026-09-30'; // Quarta-feira (dow = 3)
+    const targetDate = defaultTargetWednesday; // Quarta-feira (dow = 3)
     const dow = getDayOfWeek(targetDate);
     if (dow !== 3) {
-      throw new Error(`2026-09-30 deve ser quarta-feira (3), obtido: ${dow}`);
+      throw new Error(`${targetDate} deve ser quarta-feira (3), obtido: ${dow}`);
     }
 
     const ftA: FamilyTask = {
@@ -92,8 +97,8 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       frequency: 'WEEKLY',
       preferred_days: [3],
       preferredDays: [3],
-      start_date: '2026-09-30',
-      startDate: '2026-09-30',
+      start_date: targetDate,
+      startDate: targetDate,
       executionTarget: 'HOUSEHOLD',
       active: true
     };
@@ -106,8 +111,8 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       frequency: 'WEEKLY',
       preferred_days: [3],
       preferredDays: [3],
-      start_date: '2026-09-30',
-      startDate: '2026-09-30',
+      start_date: targetDate,
+      startDate: targetDate,
       executionTarget: 'FLEXIBLE',
       active: true
     };
@@ -120,8 +125,8 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       frequency: 'WEEKLY',
       preferred_days: [3],
       preferredDays: [3],
-      start_date: '2026-09-30',
-      startDate: '2026-09-30',
+      start_date: targetDate,
+      startDate: targetDate,
       executionTarget: 'EXTERNAL_SUPPORT',
       domesticSupportId: 'sup-maria',
       active: true
@@ -138,9 +143,9 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
     const occB = syncResult.allAssignments.find(a => a.id === `ft-flex-b_${targetDate}`);
     const occC = syncResult.allAssignments.find(a => a.id === `ft-ext-c_${targetDate}`);
 
-    if (!occA) throw new Error('Ocorrência ft-house-a_2026-09-30 não foi gerada');
-    if (!occB) throw new Error('Ocorrência ft-flex-b_2026-09-30 não foi gerada');
-    if (!occC) throw new Error('Ocorrência ft-ext-c_2026-09-30 não foi gerada');
+    if (!occA) throw new Error(`Ocorrência ft-house-a_${targetDate} não foi gerada`);
+    if (!occB) throw new Error(`Ocorrência ft-flex-b_${targetDate} não foi gerada`);
+    if (!occC) throw new Error(`Ocorrência ft-ext-c_${targetDate} não foi gerada`);
 
     if (occA.family_task_id !== 'ft-house-a') throw new Error('occA family_task_id incorreto');
     if (occB.family_task_id !== 'ft-flex-b') throw new Error('occB family_task_id incorreto');
@@ -149,7 +154,7 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
 
   // RC-HF2-02: Ocorrências recém-geradas têm status = SCHEDULED, is_unassigned = true, member_id = ''
   await record('RC-HF2-02', 'Ocorrências recém-geradas têm status = SCHEDULED, is_unassigned = true, member_id = ""', async () => {
-    const targetDate = '2026-09-30';
+    const targetDate = defaultTargetWednesday;
     const ftA: FamilyTask = {
       id: 'ft-house-a',
       family_id: testFamily.id,
@@ -157,7 +162,7 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       task_master_id: 'clean-1',
       frequency: 'WEEKLY',
       preferredDays: [3],
-      startDate: '2026-09-30',
+      startDate: targetDate,
       executionTarget: 'HOUSEHOLD',
       active: true
     };
@@ -176,13 +181,13 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
     if (occ.member_id !== '') throw new Error(`member_id esperado vazio (""), obtido: "${occ.member_id}"`);
   });
 
-  // RC-HF2-03: As três tarefas (HOUSEHOLD, FLEXIBLE, EXTERNAL_SUPPORT) aparecem no Hoje (2026-09-30) e Visão Semanal
+  // RC-HF2-03: As três tarefas (HOUSEHOLD, FLEXIBLE, EXTERNAL_SUPPORT) aparecem no Hoje (targetDate) e Visão Semanal
   await record('RC-HF2-03', 'Tarefas HOUSEHOLD, FLEXIBLE e EXTERNAL_SUPPORT hidratam corretamente para Hoje e Visão Semanal', async () => {
-    const targetDate = '2026-09-30';
+    const targetDate = defaultTargetWednesday;
     const routines: FamilyTask[] = [
-      { id: 'ft-1', family_id: testFamily.id, name: 'T1', task_master_id: 'clean-1', frequency: 'WEEKLY', preferredDays: [3], startDate: '2026-09-30', executionTarget: 'HOUSEHOLD', active: true },
-      { id: 'ft-2', family_id: testFamily.id, name: 'T2', task_master_id: 'clean-2', frequency: 'WEEKLY', preferredDays: [3], startDate: '2026-09-30', executionTarget: 'FLEXIBLE', active: true },
-      { id: 'ft-3', family_id: testFamily.id, name: 'T3', task_master_id: 'clean-3', frequency: 'WEEKLY', preferredDays: [3], startDate: '2026-09-30', executionTarget: 'EXTERNAL_SUPPORT', domesticSupportId: 'sup-1', active: true }
+      { id: 'ft-1', family_id: testFamily.id, name: 'T1', task_master_id: 'clean-1', frequency: 'WEEKLY', preferredDays: [3], startDate: targetDate, executionTarget: 'HOUSEHOLD', active: true },
+      { id: 'ft-2', family_id: testFamily.id, name: 'T2', task_master_id: 'clean-2', frequency: 'WEEKLY', preferredDays: [3], startDate: targetDate, executionTarget: 'FLEXIBLE', active: true },
+      { id: 'ft-3', family_id: testFamily.id, name: 'T3', task_master_id: 'clean-3', frequency: 'WEEKLY', preferredDays: [3], startDate: targetDate, executionTarget: 'EXTERNAL_SUPPORT', domesticSupportId: 'sup-1', active: true }
     ];
 
     const syncResult = await RoutineContinuityService.syncRoutineOccurrences({
@@ -199,7 +204,7 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       allMasterTasks: mockMasters
     });
 
-    // Filtro de Hoje (dueDate === '2026-09-30')
+    // Filtro de data alvo
     const todayTasks = tasks.filter(t => t.dueDate === targetDate);
     if (todayTasks.length !== 3) {
       throw new Error(`Esperado 3 tarefas em Hoje, obtido: ${todayTasks.length}`);
@@ -217,7 +222,7 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
 
   // RC-HF2-04: Teste crítico de mesmo TaskMaster: FamilyTask A -> clean-1 e FamilyTask B -> clean-1 geram 2 ocorrências e 2 Tasks hidratadas
   await record('RC-HF2-04', 'Teste crítico: FamilyTasks diferentes apontando para o MESMO TaskMaster coexistem na mesma data', async () => {
-    const targetDate = '2026-09-30';
+    const targetDate = defaultTargetWednesday;
     const ftA: FamilyTask = {
       id: 'ft-clean-sala',
       family_id: testFamily.id,
@@ -250,8 +255,8 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
     const occA = syncResult.allAssignments.find(a => a.id === `ft-clean-sala_${targetDate}`);
     const occB = syncResult.allAssignments.find(a => a.id === `ft-clean-quarto_${targetDate}`);
 
-    if (!occA) throw new Error('Ocorrência ft-clean-sala_2026-09-30 não foi gerada');
-    if (!occB) throw new Error('Ocorrência ft-clean-quarto_2026-09-30 não foi gerada');
+    if (!occA) throw new Error(`Ocorrência ft-clean-sala_${targetDate} não foi gerada`);
+    if (!occB) throw new Error(`Ocorrência ft-clean-quarto_${targetDate} não foi gerada`);
 
     const tasks = mapAssignmentsToTasks({
       assignments: syncResult.allAssignments,
@@ -386,9 +391,9 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
   // RC-HF2-08: Simulação de F5/Reload: reloadAssignments mantém as três tarefas intactas e não duplica ocorrências
   await record('RC-HF2-08', 'Simulação de F5/Reload: reload mantém todas as ocorrências sem duplicidade', async () => {
     const routines: FamilyTask[] = [
-      { id: 'ft-a', family_id: testFamily.id, name: 'A', task_master_id: 'clean-1', frequency: 'WEEKLY', preferredDays: [3], startDate: '2026-09-30', executionTarget: 'HOUSEHOLD', active: true },
-      { id: 'ft-b', family_id: testFamily.id, name: 'B', task_master_id: 'clean-2', frequency: 'WEEKLY', preferredDays: [3], startDate: '2026-09-30', executionTarget: 'FLEXIBLE', active: true },
-      { id: 'ft-c', family_id: testFamily.id, name: 'C', task_master_id: 'clean-3', frequency: 'WEEKLY', preferredDays: [3], startDate: '2026-09-30', executionTarget: 'EXTERNAL_SUPPORT', domesticSupportId: 'sup-1', active: true }
+      { id: 'ft-a', family_id: testFamily.id, name: 'A', task_master_id: 'clean-1', frequency: 'WEEKLY', preferredDays: [3], startDate: defaultTargetWednesday, executionTarget: 'HOUSEHOLD', active: true },
+      { id: 'ft-b', family_id: testFamily.id, name: 'B', task_master_id: 'clean-2', frequency: 'WEEKLY', preferredDays: [3], startDate: defaultTargetWednesday, executionTarget: 'FLEXIBLE', active: true },
+      { id: 'ft-c', family_id: testFamily.id, name: 'C', task_master_id: 'clean-3', frequency: 'WEEKLY', preferredDays: [3], startDate: defaultTargetWednesday, executionTarget: 'EXTERNAL_SUPPORT', domesticSupportId: 'sup-1', active: true }
     ];
 
     const initialSync = await RoutineContinuityService.syncRoutineOccurrences({
@@ -421,9 +426,9 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       allMasterTasks: mockMasters
     });
 
-    const targetDateTasks = tasks.filter(t => t.dueDate === '2026-09-30');
+    const targetDateTasks = tasks.filter(t => t.dueDate === defaultTargetWednesday);
     if (targetDateTasks.length !== 3) {
-      throw new Error(`Esperado 3 tarefas hidratadas em 2026-09-30 após F5, obtido: ${targetDateTasks.length}`);
+      throw new Error(`Esperado 3 tarefas hidratadas em ${defaultTargetWednesday} após F5, obtido: ${targetDateTasks.length}`);
     }
   });
 
@@ -683,7 +688,7 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
 
   // RC-HF2-15: Deduplicação de entrada em syncRoutineOccurrences é exclusivamente por FamilyTask.id, nunca por taskMasterId
   await record('RC-HF2-15', 'Deduplicação de entrada em syncRoutineOccurrences é exclusivamente por FamilyTask.id', async () => {
-    const targetDate = '2026-09-30';
+    const targetDate = defaultTargetWednesday;
     // Duas rotinas distintas com mesmo task_master_id
     const ft1: FamilyTask = { id: 'ft-unique-1', family_id: testFamily.id, name: 'R1', task_master_id: 'clean-1', frequency: 'DAILY', startDate: targetDate, active: true };
     const ft2: FamilyTask = { id: 'ft-unique-2', family_id: testFamily.id, name: 'R2', task_master_id: 'clean-1', frequency: 'DAILY', startDate: targetDate, active: true };

@@ -266,7 +266,96 @@ export class RoutineContinuityService {
       canonicalActiveRoutines.push(r);
     }
 
-    // 1. GERAÇÃO: 15 DIAS INCLUSIVOS (Create-If-Absent) — SEM DISTRIBUIÇÃO
+    // 1. RECONCILIAÇÃO CANÔNICA DE OCORRÊNCIAS (ROUTINE-CONTINUITY-HF3):
+    // Para cada FamilyTask ativa no horizonte de 15 dias:
+    // - EXPECTED DATE + no assignment -> CREATE SCHEDULED (Create-If-Absent)
+    // - EXPECTED DATE + CANCELLED -> RESTORE SCHEDULED (is_unassigned: true, member_id: '')
+    // - EXPECTED DATE + SCHEDULED -> KEEP
+    // - EXPECTED DATE + COMPLETED/DONE/IN_PROGRESS/SELF_CLAIMED -> PRESERVE
+    // - NON-EXPECTED DATE + pending assignment (>= today) -> CANCEL
+    // - NON-EXPECTED DATE + histórico protegido -> PRESERVE
+    for (const routine of canonicalActiveRoutines) {
+      for (const dateStr of horizonDates) {
+        const canonicalKey = `${routine.id}_${dateStr}`;
+        const existingId = occurrenceKeyToId.get(canonicalKey) || (assignmentMap.has(canonicalKey) ? canonicalKey : undefined);
+        let existingAsg = existingId ? assignmentMap.get(existingId) : undefined;
+        if (!existingAsg) {
+          existingAsg = Array.from(assignmentMap.values()).find(
+            a => (a.family_task_id === routine.id || a.id.startsWith(`${routine.id}_`)) &&
+                 (a.scheduled_date === dateStr || (a as any).scheduledDate === dateStr)
+          );
+        }
+
+        const shouldOccur = RoutineGenerator.shouldOccurOnDate(routine, dateStr);
+
+        if (shouldOccur) {
+          // EXPECTED DATE + CANCELLED -> RESTORE SCHEDULED
+          if (existingAsg && existingAsg.status === 'CANCELLED') {
+            // Histórico com conclusões reais nunca deve ser sobrescrito
+            if (!existingAsg.completed_at && !existingAsg.completed_by) {
+              const startTime = routine.preferred_time || routine.preferredTime || existingAsg.scheduled_start || '09:00';
+              const restoredAsg: TaskAssignment = {
+                ...existingAsg,
+                family_id: family.id,
+                family_task_id: routine.id,
+                task_id: routine.task_master_id || (routine as any).taskMasterId || routine.task_id || existingAsg.task_id,
+                scheduled_date: dateStr,
+                scheduled_start: startTime,
+                scheduled_end: addMinutesToTimeString(startTime, routine.estimated_minutes || 20),
+                status: 'SCHEDULED',
+                is_unassigned: true,
+                member_id: '',
+                room_id: routine.room_id || routine.roomId || existingAsg.room_id,
+                updatedAt: new Date().toISOString()
+              };
+
+              assignmentMap.set(existingAsg.id, restoredAsg);
+              if (canonicalKey) occurrenceKeyToId.set(canonicalKey, existingAsg.id);
+              newlyCreated.push(restoredAsg);
+
+              if (!isDemoMode && db && family.id) {
+                const docRef = doc(db, 'families', family.id, 'assignments', existingAsg.id);
+                try {
+                  await setDoc(docRef, FirestoreMappers.fromTaskAssignment(restoredAsg), { merge: true });
+                } catch (err) {
+                  console.warn('[syncRoutineOccurrences] Failed to persist RESTORED assignment:', err);
+                }
+              } else if (inMemoryStore) {
+                inMemoryStore.set(existingAsg.id, restoredAsg);
+              }
+            }
+          }
+          // EXPECTED DATE + SCHEDULED -> KEEP (preserva atribuição e status)
+          // EXPECTED DATE + COMPLETED/DONE/IN_PROGRESS -> PRESERVE
+        } else {
+          // NON-EXPECTED DATE: Se existe assignment pendente nesta data a partir de hoje, cancela
+          if (existingAsg && dateStr >= today) {
+            if (existingAsg.status === 'SCHEDULED' || existingAsg.status === 'PENDING') {
+              const cancelledAsg: TaskAssignment = {
+                ...existingAsg,
+                status: 'CANCELLED',
+                updatedAt: new Date().toISOString()
+              };
+              assignmentMap.set(existingAsg.id, cancelledAsg);
+
+              if (!isDemoMode && db && family.id) {
+                const docRef = doc(db, 'families', family.id, 'assignments', existingAsg.id);
+                try {
+                  await setDoc(docRef, FirestoreMappers.fromTaskAssignment(cancelledAsg), { merge: true });
+                } catch (err) {
+                  console.warn('[syncRoutineOccurrences] Failed to persist CANCELLED for non-expected date:', err);
+                }
+              } else if (inMemoryStore) {
+                inMemoryStore.set(existingAsg.id, cancelledAsg);
+              }
+            }
+            // NON-EXPECTED DATE + histórico protegido (COMPLETED, etc) -> PRESERVE
+          }
+        }
+      }
+    }
+
+    // 2. GERAÇÃO: 15 DIAS INCLUSIVOS (Create-If-Absent) — SEM DISTRIBUIÇÃO
     for (const routine of canonicalActiveRoutines) {
       const missing = RoutineGenerator.generateMissingOccurrences({
         routine,
