@@ -8,6 +8,14 @@ import { DistributionEngine, DistributionContext } from '../../domain/distributi
 
 export class DistributeTasksUseCase {
   public execute(ctx: DistributionContext): TaskAssignment[] {
-    return DistributionEngine.distributeDailyTasks(ctx);
+    // Camada de Aplicação / Orquestração:
+    // Filtra EXTERNAL_SUPPORT antes de invocar o Motor 2.0
+    const filteredFamilyTasks = ctx.familyTasks.filter(
+      ft => (ft.executionTarget || 'HOUSEHOLD') !== 'EXTERNAL_SUPPORT'
+    );
+    return DistributionEngine.distributeDailyTasks({
+      ...ctx,
+      familyTasks: filteredFamilyTasks
+    });
   }
 }

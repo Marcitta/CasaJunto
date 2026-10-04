@@ -55,14 +55,9 @@ export const RebalanceModal: React.FC = () => {
       const taskDate = t.dueDate || selectedDate;
       if (taskDate !== selectedDate) return false;
       if (t.status === 'CANCELLED' || (t.status as string) === 'CANCELLED') return false;
-      // Regra de produto (ExecutionTarget):
-      // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
-      // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
-      if (t.executionTarget === 'EXTERNAL_SUPPORT') return false;
       if (t.familyTaskId && familyTasks && familyTasks.length > 0) {
         const ft = familyTasks.find(f => f.id === t.familyTaskId);
         if (ft && ft.active === false) return false;
-        if (ft && ft.executionTarget === 'EXTERNAL_SUPPORT') return false;
       }
       if (seen.has(t.id)) return false;
       seen.add(t.id);
@@ -71,8 +66,13 @@ export const RebalanceModal: React.FC = () => {
   }, [tasks, selectedDate, familyTasks]);
 
   const pendingTasks = useMemo(() => {
-    return targetDateTasks.filter(t => t.status !== 'DONE' && (t.status as string) !== 'COMPLETED');
-  }, [targetDateTasks]);
+    return targetDateTasks.filter(t => {
+      if (t.status === 'DONE' || (t.status as string) === 'COMPLETED') return false;
+      const ft = familyTasks?.find(f => f.id === t.familyTaskId);
+      const target = ft?.executionTarget || t.executionTarget || 'HOUSEHOLD';
+      return target !== 'EXTERNAL_SUPPORT';
+    });
+  }, [targetDateTasks, familyTasks]);
 
   if (!isRebalanceModalOpen) return null;
 
@@ -93,7 +93,8 @@ export const RebalanceModal: React.FC = () => {
       members,
       tasks: targetDateTasks,
       protectedTimes,
-      targetDate: selectedDate
+      targetDate: selectedDate,
+      familyTasks
     });
     setPreviewResult(preview);
   };
@@ -375,7 +376,11 @@ export const RebalanceModal: React.FC = () => {
                           </div>
 
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            {isAdmin ? (
+                            {originalTask?.executionTarget === 'EXTERNAL_SUPPORT' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-surface-subtle text-text-muted border border-border-default font-semibold text-[11px]">
+                                Apoio Externo
+                              </span>
+                            ) : isAdmin ? (
                               <select
                                 value={asg.member_id || ''}
                                 onChange={(e) => handleOverrideProposal(asg.id, e.target.value)}

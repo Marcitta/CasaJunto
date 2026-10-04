@@ -39,11 +39,8 @@ export class DistributionEngine {
     const isHelperToday = helper && helper.active && helper.days.includes(ctx.dayOfWeek);
 
     // 1. Filtrar tarefas agendadas para o dia alvo
-    // Regra de produto: EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
-    // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
     const tasksForToday = ctx.familyTasks.filter(ft => {
       if (!ft.active) return false;
-      if (ft.executionTarget === 'EXTERNAL_SUPPORT') return false;
       if (ft.frequency === 'daily') return true;
       if (ft.preferred_days && ft.preferred_days.includes(ctx.dayOfWeek)) return true;
       return false;

@@ -459,7 +459,7 @@ export async function runRoutineContinuityHf2Tests(): Promise<{
       currentAssignments = result.allAssignments;
     }
 
-    const expectedHorizonMatches = getRollingDateHorizon('2026-09-30', 15).filter(d => {
+    const expectedHorizonMatches = getRollingDateHorizon(horizonToday, 15).filter(d => {
       const dow = getDayOfWeek(d);
       return [1, 3, 5].includes(dow);
     });

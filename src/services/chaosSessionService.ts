@@ -1904,6 +1904,25 @@ export class ChaosSessionService {
       ? (allTasks.some(t => t.id === taskMaster.id) ? allTasks : [...allTasks, taskMaster])
       : [taskMaster];
 
+    // Regra canônica de fronteira: EXTERNAL_SUPPORT não é enviada ao Motor 2.0
+    const target = familyTask.executionTarget || 'HOUSEHOLD';
+    if (target === 'EXTERNAL_SUPPORT') {
+      return {
+        id: `asg-ext-${todayDate}-${taskMaster.id}-${Date.now()}`,
+        family_id: familyTask.family_id,
+        family_task_id: familyTask.id,
+        task_id: taskMaster.id,
+        member_id: '',
+        scheduled_date: todayDate,
+        scheduled_start: familyTask.preferred_time || '08:00',
+        status: 'SCHEDULED',
+        score: 0,
+        is_unassigned: true,
+        assigned_reason: 'Apoio Externo (EXTERNAL_SUPPORT)',
+        rescheduled_count: 0
+      };
+    }
+
     const distributionCtx: DistributionContext = {
       users: activeParticipants,
       allTasks: taskPool,

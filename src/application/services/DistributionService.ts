@@ -35,9 +35,33 @@ export interface BuildDistributionContextParams {
   protectedTimes: ProtectedTime[];
   targetDate?: string;
   dayOfWeek?: number;
+  familyTasks?: FamilyTask[];
 }
 
 export class DistributionService {
+  /**
+   * Resolve o target de execução da tarefa pelo family_task_id na camada de aplicação.
+   * Regra canônica:
+   * executionTarget ausente → HOUSEHOLD
+   * Não inferir por TaskMaster, título, domesticSupportId ou nome da ajuda externa.
+   */
+  public static resolveExecutionTarget(
+    task: Task | TaskAssignment,
+    familyTasks?: FamilyTask[]
+  ): 'HOUSEHOLD' | 'FLEXIBLE' | 'EXTERNAL_SUPPORT' {
+    const familyTaskId = (task as Task).familyTaskId || (task as TaskAssignment).family_task_id;
+    if (familyTaskId && familyTasks && familyTasks.length > 0) {
+      const ft = familyTasks.find(f => f.id === familyTaskId);
+      if (ft?.executionTarget) {
+        return ft.executionTarget;
+      }
+    }
+    const directTarget = (task as any).executionTarget || (task as any).execution_target;
+    if (directTarget) {
+      return directTarget;
+    }
+    return 'HOUSEHOLD';
+  }
   /**
    * Converte uma Task da interface de usuário em um TaskMaster de catálogo caso não exista.
    */
@@ -115,10 +139,13 @@ export class DistributionService {
     for (const task of params.tasks) {
       if ((task.status as string) === 'CANCELLED') continue;
       if ((task as any).active === false) continue;
-      // Regra de produto (ExecutionTarget):
-      // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
+
+      // Resolução canônica de FamilyTask pelo family_task_id na fronteira de aplicação
+      const target = this.resolveExecutionTarget(task, params.familyTasks);
+
       // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
-      if (task.executionTarget === 'EXTERNAL_SUPPORT') continue;
+      // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e é excluído antes de chamar o Motor.
+      if (target === 'EXTERNAL_SUPPORT') continue;
 
       // Restringe ao targetDate quando dueDate estiver preenchido
       const taskDate = task.dueDate || targetDate;
@@ -145,9 +172,7 @@ export class DistributionService {
         preferred_days: [dayOfWeek],
         preferred_time: scheduledStart,
         active: true,
-        assigned_automatically: true,
-        executionTarget: task.executionTarget || 'HOUSEHOLD',
-        domesticSupportId: task.domesticSupportId || null
+        assigned_automatically: true
       });
 
       existingAssignments.push({
@@ -188,24 +213,86 @@ export class DistributionService {
 
   /**
    * Executa o rebalanceamento oficial através do Motor 2.0.
+   * Fronteira de Aplicação / Orquestração:
+   * 1. Separa externalAssignments da agenda completa (preservadas intactas)
+   * 2. Envia apenas tarefas HOUSEHOLD e FLEXIBLE ao Motor 2.0
+   * 3. Recompõe o resultado operacional fora de RebalanceService
    */
   public static executeRebalance(params: BuildDistributionContextParams): {
     result: RebalanceResult;
     taskUpdates: Record<string, Partial<Task>>;
   } {
-    const ctx = this.buildContext(params);
-    const result = DistributionEngine.rebalance(ctx);
+    const targetDate = params.targetDate || getTodayDateString();
+
+    // 1. Separar a agenda completa antes do Motor 2.0:
+    //    - externalTasks: preservadas intactas
+    //    - motorTasks (HOUSEHOLD + FLEXIBLE): enviadas ao Motor
+    const externalTasks: Task[] = [];
+    const motorTasks: Task[] = [];
+
+    for (const task of params.tasks) {
+      const target = this.resolveExecutionTarget(task, params.familyTasks);
+      if (target === 'EXTERNAL_SUPPORT') {
+        externalTasks.push(task);
+      } else {
+        motorTasks.push(task);
+      }
+    }
+
+    // 2. Prepara o contexto do Motor 2.0 APENAS com tarefas HOUSEHOLD + FLEXIBLE
+    const motorContext = this.buildContext({
+      ...params,
+      tasks: motorTasks
+    });
+
+    // 3. Executa o rebalanceamento puro no Motor 2.0 (sem conhecimento de EXTERNAL_SUPPORT)
+    const motorResult = DistributionEngine.rebalance(motorContext);
+
+    // 4. Converte externalTasks em assignments preservados intactos (is_unassigned, sem membro)
+    const externalAssignments: TaskAssignment[] = externalTasks.map(t => {
+      const master = this.getOrCreateTaskMaster(t);
+      const ftId = t.familyTaskId || `ft-${t.id}`;
+      return {
+        id: t.id,
+        family_id: params.family.id,
+        family_task_id: ftId,
+        task_id: master.id,
+        member_id: '',
+        room_id: t.roomId || null,
+        scheduled_date: t.dueDate || targetDate,
+        scheduled_start: t.scheduledStart || '08:00',
+        scheduled_end: t.scheduledEnd,
+        status: t.status === 'DONE' || (t.status as string) === 'COMPLETED' ? 'COMPLETED' : 'SCHEDULED',
+        score: 0,
+        assigned_reason: t.assignedReason || 'Apoio Externo (EXTERNAL_SUPPORT)',
+        unassigned_reason: t.unassignedReason || 'Tarefa de apoio externo não alocada a membros',
+        is_unassigned: true,
+        factors: t.factors,
+        rescheduled_count: 0
+      };
+    });
+
+    // 5. Recomposição do resultado operacional FORA de RebalanceService:
+    //    proposedAssignments une o resultado do Motor com as externalAssignments preservadas intactas
+    const seenProposedIds = new Set<string>();
+    const proposedAssignments: TaskAssignment[] = [];
+    for (const asg of [...motorResult.proposedAssignments, ...externalAssignments]) {
+      if (!seenProposedIds.has(asg.id)) {
+        seenProposedIds.add(asg.id);
+        proposedAssignments.push(asg);
+      }
+    }
 
     const taskUpdates: Record<string, Partial<Task>> = {};
 
-    for (const asg of result.proposedAssignments) {
+    for (const asg of motorResult.proposedAssignments) {
       const original = params.tasks.find(t => t.id === asg.id);
       // Regra canônica: Tarefas já concluídas NUNCA são reatribuídas pelo rebalance
       if (original?.status === 'DONE' || (original?.status as string) === 'COMPLETED') {
         continue;
       }
 
-      const member = ctx.users.find(u => u.id === asg.member_id);
+      const member = motorContext.users.find(u => u.id === asg.member_id);
       const isUnassigned = asg.is_unassigned || !asg.member_id;
 
       taskUpdates[asg.id] = {
@@ -222,7 +309,13 @@ export class DistributionService {
       };
     }
 
-    return { result, taskUpdates };
+    return {
+      result: {
+        ...motorResult,
+        proposedAssignments
+      },
+      taskUpdates
+    };
   }
 
   /**

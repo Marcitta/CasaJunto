@@ -1325,7 +1325,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       members,
       tasks,
       protectedTimes,
-      targetDate: selectedDate
+      targetDate: selectedDate,
+      familyTasks
     });
 
     await applyRebalanceUpdates(taskUpdates);

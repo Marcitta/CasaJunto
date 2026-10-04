@@ -428,15 +428,6 @@ export class RoutineContinuityService {
       for (const dateTarget of autoDistributionDates) {
         const unassignedForDate: TaskAssignment[] = [];
         for (const asg of assignmentMap.values()) {
-          const r = asg.family_task_id ? routineMap.get(asg.family_task_id) : undefined;
-          const execTarget = r?.executionTarget || (asg as any).executionTarget || (asg as any).execution_target || 'HOUSEHOLD';
-          // Regra de produto (ExecutionTarget):
-          // EXTERNAL_SUPPORT não entra no pool do Motor 2.0 e não é atribuída a MEMBER.
-          // HOUSEHOLD e FLEXIBLE entram no pool do Motor 2.0.
-          if (execTarget === 'EXTERNAL_SUPPORT') {
-            continue;
-          }
-
           if (
             asg.scheduled_date === dateTarget &&
             (asg.status === 'SCHEDULED' || asg.status === 'PENDING') &&
@@ -483,7 +474,8 @@ export class RoutineContinuityService {
             members: activeMembers,
             tasks: tasksToDistribute,
             protectedTimes,
-            targetDate: dateTarget
+            targetDate: dateTarget,
+            familyTasks: params.routines
           });
 
           // Aplica atualizações nas ocorrências correspondentes
