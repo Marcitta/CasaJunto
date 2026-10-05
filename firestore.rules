@@ -50,8 +50,11 @@ service cloud.firestore {
       // NOTIFICATIONS-1A.1: Subcoleção pushDevices para registro de dispositivos de notificações push (FCM)
       // Somente o próprio usuário autenticado pode ler, criar ou alterar seus dispositivos
       // Usuário A NÃO pode acessar pushDevices do usuário B
+      // NOTIFICATIONS-1A.1-HF1: Hard delete proibido; desativação é feita via active=false (soft deactivation)
       match /pushDevices/{deviceId} {
-        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read: if isUser(userId);
+        allow create, update: if isUser(userId);
+        allow delete: if false;
       }
     }
 

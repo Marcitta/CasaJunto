@@ -68,9 +68,9 @@ export async function runNotifications1a1Tests(): Promise<{
     }
   });
 
-  // N1A1-02: usuário não pode registrar dispositivo para outro UID
-  await record('N1A1-02', 'usuário não pode registrar ou consultar dispositivo para outro UID (fronteira de segurança)', async () => {
-    // 1. Validação de rejeição de UID vazio/inválido
+  // N1A1-02: verificação estática de regras do Firestore: isolamento de UID e proibição de delete
+  await record('N1A1-02', 'verificação estática das Firestore Rules: isolamento de UID (isUser) e proibição de delete (allow delete: if false)', async () => {
+    // 1. Validação de rejeição de UID vazio/inválido no serviço
     try {
       await PushDeviceService.registerDevice({
         userId: '',
@@ -84,23 +84,41 @@ export async function runNotifications1a1Tests(): Promise<{
       }
     }
 
-    // 2. Validação estrita nas regras de segurança do Firestore (firestore.rules)
+    // 2. VERIFICAÇÃO ESTÁTICA das regras de segurança do Firestore (firestore.rules)
+    // NOTA: Este teste realiza análise e validação estática de segurança do arquivo firestore.rules
+    // (não executa autorização real em tempo de execução contra Firestore Emulator).
     const rulesPath = path.resolve('firestore.rules');
     const rulesContent = fs.readFileSync(rulesPath, 'utf-8');
 
+    // Verifica helper canônico isUser que vincula request.auth.uid == userId
+    if (!rulesContent.includes('function isUser(userId)') || !rulesContent.includes('request.auth.uid == userId')) {
+      throw new Error('firestore.rules deve conter helper isUser(userId) validando request.auth.uid == userId');
+    }
+
     // Verifica que existe regra específica para /users/{userId}/pushDevices/{deviceId}
-    if (!rulesContent.includes('match /pushDevices/{deviceId}')) {
+    const pushMatchIndex = rulesContent.indexOf('match /pushDevices/{deviceId}');
+    if (pushMatchIndex === -1) {
       throw new Error('firestore.rules deve conter match /pushDevices/{deviceId}');
     }
 
-    // Verifica que exige request.auth.uid == userId
     const pushRuleBlock = rulesContent.substring(
-      rulesContent.indexOf('match /pushDevices/{deviceId}'),
-      rulesContent.indexOf('match /pushDevices/{deviceId}') + 200
+      pushMatchIndex,
+      pushMatchIndex + 250
     );
 
-    if (!pushRuleBlock.includes('request.auth.uid == userId')) {
-      throw new Error('Regra de pushDevices deve exigir estritamente request.auth.uid == userId');
+    // Validação estática: leitura permitida apenas para o próprio usuário
+    if (!pushRuleBlock.includes('allow read: if isUser(userId);')) {
+      throw new Error('Regra de pushDevices deve conter "allow read: if isUser(userId);"');
+    }
+
+    // Validação estática: criação e alteração permitidas apenas para o próprio usuário
+    if (!pushRuleBlock.includes('allow create, update: if isUser(userId);')) {
+      throw new Error('Regra de pushDevices deve conter "allow create, update: if isUser(userId);"');
+    }
+
+    // Validação estática: hard delete proibido (arquitetura adota soft deactivation via active=false)
+    if (!pushRuleBlock.includes('allow delete: if false;')) {
+      throw new Error('Regra de pushDevices deve conter "allow delete: if false;"');
     }
   });
 
