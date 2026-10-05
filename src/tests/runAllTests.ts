@@ -61,6 +61,7 @@ import { runExecutionTargetMotorTests } from './executionTargetMotor.test';
 import { runNotifications1a1Tests } from './notifications1a1.test';
 import { runNotifications1a2Tests } from './notifications1a2.test';
 import { runNotifications1a2Hf1Tests } from './notifications1a2Hf1.test';
+import { runNotifications1a3Tests } from './notifications1a3.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -901,6 +902,20 @@ for (const r of n1a2Results.results) {
 console.log('\n--- GRUPO 63: NOTIFICATIONS-1A.2-HF1 (SAFE PUSH LOGOUT - HF1-01 - HF1-08) ---');
 const hf1Results = await runNotifications1a2Hf1Tests();
 for (const r of hf1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 64. NOTIFICATIONS-1A.3: Minimal PWA / iOS Home Screen Readiness (12 TESTES: N1A3-01 - N1A3-12)
+console.log('\n--- GRUPO 64: NOTIFICATIONS-1A.3 (MINIMAL PWA / IOS HOME SCREEN READINESS - N1A3-01 - N1A3-12) ---');
+const n1a3Results = await runNotifications1a3Tests();
+for (const r of n1a3Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
