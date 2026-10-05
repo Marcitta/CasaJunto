@@ -3,13 +3,14 @@
  * Serviço server-side responsável pela entrega de notificações FCM
  * para os dispositivos ativos do usuário.
  *
- * REGRAS CRÍTICAS:
+ * REGRAS CRÍTICAS (1B.1-HF1):
  * 1. Opera exclusivamente no banco Firestore nomeado CASAJUNTO_FIRESTORE_DATABASE_ID.
  * 2. Consulta apenas dispositivos com active == true.
  * 3. Suporta múltiplos dispositivos para o mesmo usuário.
  * 4. Tokens definitivamente inválidos sofrem SOFT DEACTIVATION (active=false, NUNCA delete).
- * 5. Erros temporários NÃO desativam o dispositivo.
- * 6. Nenhum token FCM completo é escrito em logs.
+ * 5. INVALID_ARGUMENT e messaging/invalid-argument NÃO desativam sozinhos (exigem evidência inequívoca de token inválido).
+ * 6. Erros temporários, payload inválido e erros desconhecidos NÃO desativam o dispositivo (active permanece true).
+ * 7. Nenhum token FCM completo é escrito em logs ou retornado em mensagens de erro (sanitização estrita).
  */
 
 import { getAdminFirestore, getAdminMessaging, CASAJUNTO_FIRESTORE_DATABASE_ID } from '../firebaseAdmin';
@@ -43,14 +44,26 @@ export interface PushDeliveryResult {
 }
 
 /**
- * Códigos de erro do Firebase Admin / FCM considerados definitivamente inválidos.
- * Tokens com estes erros indicam que o app foi desinstalado ou o token expirou.
+ * Códigos de erro do Firebase Admin / FCM considerados incondicionalmente
+ * como token definitivamente inválido (app desinstalado ou token revogado).
  */
-export const DEFINITIVE_INVALID_TOKEN_ERROR_CODES = [
+export const UNCONDITIONAL_INVALID_TOKEN_ERROR_CODES = [
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
+  'UNREGISTERED'
+] as const;
+
+/**
+ * Alias de compatibilidade com versões anteriores.
+ */
+export const DEFINITIVE_INVALID_TOKEN_ERROR_CODES = UNCONDITIONAL_INVALID_TOKEN_ERROR_CODES;
+
+/**
+ * Códigos de erro que podem indicar erro de payload OU de token.
+ * NUNCA desativam sozinhos — requerem evidência inequívoca no corpo do erro.
+ */
+export const CONDITIONAL_ARGUMENT_ERROR_CODES = [
   'messaging/invalid-argument',
-  'UNREGISTERED',
   'INVALID_ARGUMENT'
 ] as const;
 
@@ -89,25 +102,97 @@ export class PushDeliveryService {
   }
 
   /**
+   * Sanitiza a mensagem de erro retornada pelo FCM ou SDK,
+   * removendo ou mascarando qualquer token FCM presente no texto.
+   * Impede vazamento de tokens brutos em result.details, logs ou banco de dados.
+   */
+  public static sanitizeErrorMessage(rawMessage: string, token?: string): string {
+    if (!rawMessage || typeof rawMessage !== 'string') return '';
+    let sanitized = rawMessage;
+
+    // 1. Substitui ocorrências do token fornecido
+    if (token && token.trim().length > 0) {
+      sanitized = sanitized.split(token).join(this.maskToken(token));
+    }
+
+    // 2. Remove/mascara tokens longos entre aspas ou delimitadores no texto
+    sanitized = sanitized.replace(/['"]([A-Za-z0-9_\-:]{20,})['"]/g, (_match, p1) => {
+      return `"${this.maskToken(p1)}"`;
+    });
+
+    return sanitized;
+  }
+
+  /**
+   * Avalia se a mensagem de erro contém evidência inequívoca
+   * de que o registration token é estritamente o argumento inválido.
+   */
+  public static hasUnambiguousTokenInvalidEvidence(errorMessage: string): boolean {
+    if (!errorMessage || typeof errorMessage !== 'string') return false;
+    const msg = errorMessage.toLowerCase();
+
+    const tokenKeywords = [
+      'registration token',
+      'registration-token',
+      'fcm registration token',
+      'fcm token',
+      'device token'
+    ];
+
+    const invalidKeywords = [
+      'not a valid',
+      'is not valid',
+      'not valid',
+      'invalid',
+      'not registered',
+      'unregistered',
+      'malformed'
+    ];
+
+    const mentionsToken = tokenKeywords.some(tk => msg.includes(tk));
+    const mentionsInvalid = invalidKeywords.some(ik => msg.includes(ik));
+
+    return mentionsToken && mentionsInvalid;
+  }
+
+  /**
    * Avalia se um erro retornado pelo FCM indica token definitivamente inválido.
+   * REGRA CRÍTICA (1B.1-HF1):
+   * 1. Códigos incondicionais (UNREGISTERED, registration-token-not-registered, invalid-registration-token) -> true.
+   * 2. INVALID_ARGUMENT e messaging/invalid-argument sozinhos -> FALSE (podem ser erro de payload).
+   * 3. INVALID_ARGUMENT apenas vira true se houver evidência inequívoca no erro de que o token é inválido.
+   * 4. Na dúvida: false (não desativa).
    */
   public static isDefinitiveInvalidToken(errorCode?: string, errorMessage?: string): boolean {
-    if (errorCode) {
-      if (DEFINITIVE_INVALID_TOKEN_ERROR_CODES.some(c => c.toLowerCase() === errorCode.toLowerCase())) {
+    const code = (errorCode || '').trim();
+    const msg = (errorMessage || '').trim();
+
+    // 1. Incondicionalmente inválido
+    if (code) {
+      if (UNCONDITIONAL_INVALID_TOKEN_ERROR_CODES.some(c => c.toLowerCase() === code.toLowerCase())) {
         return true;
       }
     }
-    if (errorMessage) {
-      const msg = errorMessage.toLowerCase();
-      if (
-        msg.includes('not registered') ||
-        msg.includes('registration-token-not-registered') ||
-        msg.includes('invalid registration token') ||
-        msg.includes('token is no longer valid')
-      ) {
-        return true;
-      }
+
+    // Se o código for explicitamente de argumento condicional
+    const isConditionalCode = CONDITIONAL_ARGUMENT_ERROR_CODES.some(c => c.toLowerCase() === code.toLowerCase());
+
+    if (isConditionalCode) {
+      // Requer evidência inequívoca no texto
+      return this.hasUnambiguousTokenInvalidEvidence(msg);
     }
+
+    // Se a mensagem contiver menção explícita de registration token not registered
+    const lowerMsg = msg.toLowerCase();
+    if (
+      lowerMsg.includes('registration-token-not-registered') ||
+      lowerMsg.includes('requested entity was not found') ||
+      (lowerMsg.includes('registration token') && lowerMsg.includes('not registered'))
+    ) {
+      return true;
+    }
+
+    // Na dúvida: NÃO desativa
     return false;
   }
 
@@ -182,7 +267,6 @@ export class PushDeliveryService {
       }
 
       result.deliveriesAttempted++;
-      const maskedToken = this.maskToken(token);
 
       try {
         // Envio via Firebase Admin Messaging
@@ -212,9 +296,10 @@ export class PushDeliveryService {
         }
       } catch (fcmErr: any) {
         const errorCode = fcmErr?.code || fcmErr?.errorInfo?.code || 'UNKNOWN_ERROR';
-        const errorMessage = fcmErr?.message || String(fcmErr);
+        const rawErrorMessage = fcmErr?.message || String(fcmErr);
+        const sanitizedError = this.sanitizeErrorMessage(rawErrorMessage, token);
 
-        if (this.isDefinitiveInvalidToken(errorCode, errorMessage)) {
+        if (this.isDefinitiveInvalidToken(errorCode, rawErrorMessage)) {
           // Token definitivamente inválido: SOFT DEACTIVATION (active = false)
           // NUNCA hard delete
           result.invalidTokensCount++;
@@ -222,7 +307,7 @@ export class PushDeliveryService {
             deviceId,
             status: 'INVALID_TOKEN',
             errorCode,
-            errorMessage
+            errorMessage: sanitizedError
           });
 
           try {
@@ -235,13 +320,13 @@ export class PushDeliveryService {
             console.warn(`[PushDelivery] Falha ao desativar dispositivo ${deviceId}:`, deactivateErr);
           }
         } else {
-          // Erro temporário (rede, quota, servidor indisponível): NÃO desativa
+          // Erro temporário, payload inválido ou desconhecido: NÃO desativa
           result.failureCount++;
           result.details.push({
             deviceId,
             status: 'FAILED',
             errorCode,
-            errorMessage
+            errorMessage: sanitizedError
           });
         }
       }

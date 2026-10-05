@@ -63,6 +63,7 @@ import { runNotifications1a2Tests } from './notifications1a2.test';
 import { runNotifications1a2Hf1Tests } from './notifications1a2Hf1.test';
 import { runNotifications1a3Tests } from './notifications1a3.test';
 import { runNotifications1b1Tests } from './notifications1b1.test';
+import { runNotifications1b1Hf1Tests } from './notifications1b1Hf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -931,6 +932,20 @@ for (const r of n1a3Results.results) {
 console.log('\n--- GRUPO 65: NOTIFICATIONS-1B.1 (BACKEND FCM FOUNDATION - N1B1-01 - N1B1-12) ---');
 const n1b1Results = await runNotifications1b1Tests();
 for (const r of n1b1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 66. NOTIFICATIONS-1B.1-HF1: Safe Invalid Token Classification (10 TESTES: HF1-01 - HF1-10)
+console.log('\n--- GRUPO 66: NOTIFICATIONS-1B.1-HF1 (SAFE INVALID TOKEN CLASSIFICATION - HF1-01 - HF1-10) ---');
+const n1b1Hf1Results = await runNotifications1b1Hf1Tests();
+for (const r of n1b1Hf1Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
