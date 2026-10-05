@@ -60,6 +60,7 @@ import { runRoutineContinuityHf3Tests } from './routineContinuityHf3.test';
 import { runExecutionTargetMotorTests } from './executionTargetMotor.test';
 import { runNotifications1a1Tests } from './notifications1a1.test';
 import { runNotifications1a2Tests } from './notifications1a2.test';
+import { runNotifications1a2Hf1Tests } from './notifications1a2Hf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -886,6 +887,20 @@ for (const r of n1a1Results.results) {
 console.log('\n--- GRUPO 62: NOTIFICATIONS-1A.2 (PUSH PERMISSION + DEVICE ACTIVATION UX - N1A2-01 - N1A2-12) ---');
 const n1a2Results = await runNotifications1a2Tests();
 for (const r of n1a2Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 63. NOTIFICATIONS-1A.2-HF1: Safe Push Logout (8 TESTES: HF1-01 - HF1-08)
+console.log('\n--- GRUPO 63: NOTIFICATIONS-1A.2-HF1 (SAFE PUSH LOGOUT - HF1-01 - HF1-08) ---');
+const hf1Results = await runNotifications1a2Hf1Tests();
+for (const r of hf1Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

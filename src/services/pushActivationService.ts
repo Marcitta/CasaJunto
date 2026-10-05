@@ -13,7 +13,7 @@
  */
 
 import { getToken } from 'firebase/messaging';
-import { getFirebaseMessaging } from '../infrastructure/firebase/firebaseConfig';
+import { getFirebaseMessaging, auth } from '../infrastructure/firebase/firebaseConfig';
 import { PushDeviceService } from './pushDeviceService';
 import { PushDevice } from '../types';
 
@@ -47,6 +47,13 @@ export interface ActivatePushParams {
 
 export interface DeactivatePushParams {
   userId: string;
+  deviceId?: string;
+  inMemoryStore?: Map<string, PushDevice>;
+  mockWindow?: any;
+}
+
+export interface HandleLogoutParams {
+  userId?: string | null;
   deviceId?: string;
   inMemoryStore?: Map<string, PushDevice>;
   mockWindow?: any;
@@ -412,18 +419,77 @@ export class PushActivationService {
   }
 
   /**
-   * Limpa o vínculo e o estado de registro push local ao realizar logout.
-   * Impede que a sessão de outro usuário subsequente reutilize silenciosamente
-   * o registro push do usuário anterior.
+   * NOTIFICATIONS-1A.2-HF1: SAFE PUSH LOGOUT
+   * Antes do Firebase Auth signOut:
+   * 1. Identificar Firebase Auth UID atual;
+   * 2. Identificar deviceId atual;
+   * 3. Executar soft deactivation no PushDeviceService: active = false;
+   * 4. Somente depois limpar o estado local;
+   * 5. Falhas de rede ou indisponibilidade remota NÃO bloqueiam o logout.
    */
-  public static handleLogout(): void {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.removeItem('casajunto_push_device_id');
-        window.localStorage.removeItem(this.LOCAL_ACTIVE_KEY);
+  public static async handleLogout(
+    paramsOrUserId?: HandleLogoutParams | string | null,
+    inMemoryStore?: Map<string, PushDevice>,
+    mockWindow?: any
+  ): Promise<void> {
+    let userId: string | null | undefined;
+    let explicitDeviceId: string | undefined;
+    let store = inMemoryStore;
+    let win = mockWindow;
+
+    if (paramsOrUserId && typeof paramsOrUserId === 'object') {
+      userId = paramsOrUserId.userId;
+      explicitDeviceId = paramsOrUserId.deviceId;
+      if (paramsOrUserId.inMemoryStore) store = paramsOrUserId.inMemoryStore;
+      if (paramsOrUserId.mockWindow) win = paramsOrUserId.mockWindow;
+    } else if (typeof paramsOrUserId === 'string') {
+      userId = paramsOrUserId;
+    } else {
+      userId = null;
+    }
+
+    win = win || (typeof window !== 'undefined' ? window : null);
+
+    // 1. Identificar Firebase Auth UID atual caso não tenha sido explicitamente fornecido
+    if (!userId) {
+      try {
+        if (auth && auth.currentUser) {
+          userId = auth.currentUser.uid;
+        }
+      } catch {
+        // Ignora erro ao inspecionar auth
       }
-    } catch {
-      // Ignora restrição de storage
+    }
+
+    // 2. Identificar deviceId atual antes de limpar o storage
+    let deviceId = explicitDeviceId;
+    if (!deviceId && win && win.localStorage) {
+      try {
+        const stored = win.localStorage.getItem('casajunto_push_device_id');
+        if (stored) deviceId = stored;
+      } catch {
+        // Ignora erro de acesso a storage
+      }
+    }
+
+    // 3. Tentar soft deactivation no PushDeviceService: active=false
+    try {
+      if (userId && deviceId) {
+        await PushDeviceService.deactivateDevice(userId, deviceId, store);
+      }
+    } catch (remoteErr) {
+      // Falha de rede na desativação NÃO impede o usuário de sair da conta
+      console.warn('Falha na desativação remota do pushDevice no logout:', remoteErr);
+    } finally {
+      // 4. Somente depois limpar vínculo push local
+      try {
+        if (win && win.localStorage) {
+          win.localStorage.removeItem('casajunto_push_device_id');
+          win.localStorage.removeItem(this.LOCAL_ACTIVE_KEY);
+        }
+      } catch {
+        // Ignora restrição de storage
+      }
     }
   }
 }

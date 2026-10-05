@@ -263,9 +263,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      PushActivationService.handleLogout();
+      await PushActivationService.handleLogout(currentUser?.id);
     } catch (pushErr) {
-      console.warn('Erro ao limpar vinculo push no logout:', pushErr);
+      console.warn('Erro ao desativar/limpar vinculo push no logout:', pushErr);
     }
     try {
       await fbSignOut(auth);
