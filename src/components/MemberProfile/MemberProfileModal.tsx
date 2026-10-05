@@ -16,9 +16,11 @@ import {
   Trophy, 
   Moon, 
   Info,
-  ChevronRight
+  ChevronRight,
+  Bell
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { PushNotificationSettings } from './PushNotificationSettings';
 import { ProtectedTime, ProtectedTimeType, MemberProfileUpdateData } from '../../types';
 import { 
   calculateAgeFromBirthDate, 
@@ -51,7 +53,7 @@ export const MemberProfileModal: React.FC = () => {
     (activeMemberForProfile && currentMember?.id === activeMemberForProfile.id)
   );
 
-  const [activeTab, setActiveTab] = useState<'general' | 'schedule'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'schedule' | 'notifications'>('general');
 
   // General Tab Form State
   const [name, setName] = useState('');
@@ -370,6 +372,18 @@ export const MemberProfileModal: React.FC = () => {
                 {memberProtectedTimes.length}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`py-3 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition cursor-pointer ${
+              activeTab === 'notifications'
+                ? 'border-brand-primary text-brand-primary'
+                : 'border-transparent text-text-muted hover:text-text-primary'
+            }`}
+            id="tab-profile-notifications"
+          >
+            <Bell className="w-3.5 h-3.5" />
+            <span>Notificações</span>
           </button>
         </div>
 
@@ -846,6 +860,10 @@ export const MemberProfileModal: React.FC = () => {
                 )}
               </div>
             </div>
+          )}
+
+          {activeTab === 'notifications' && (
+            <PushNotificationSettings />
           )}
         </div>
       </div>

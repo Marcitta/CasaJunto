@@ -21,6 +21,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, googleProvider, isFirebaseConfigured } from '../infrastructure/firebase/firebaseConfig';
 import { AuthService } from '../infrastructure/firebase/authService';
+import { PushActivationService } from '../services/pushActivationService';
 import { Family, FamilyMembership, Member, AuthUser } from '../types';
 import { DEMO_FAMILY } from '../data/mockData';
 
@@ -261,6 +262,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    try {
+      PushActivationService.handleLogout();
+    } catch (pushErr) {
+      console.warn('Erro ao limpar vinculo push no logout:', pushErr);
+    }
     try {
       await fbSignOut(auth);
     } catch (err) {

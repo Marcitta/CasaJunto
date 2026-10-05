@@ -59,6 +59,7 @@ import { runRoutineContinuityHf2Tests } from './routineContinuityHf2.test';
 import { runRoutineContinuityHf3Tests } from './routineContinuityHf3.test';
 import { runExecutionTargetMotorTests } from './executionTargetMotor.test';
 import { runNotifications1a1Tests } from './notifications1a1.test';
+import { runNotifications1a2Tests } from './notifications1a2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -871,6 +872,20 @@ for (const r of etmResults.results) {
 console.log('\n--- GRUPO 61: NOTIFICATIONS-1A.1 (FCM FOUNDATION / DEVICE REGISTRATION - N1A1-01 - N1A1-08) ---');
 const n1a1Results = await runNotifications1a1Tests();
 for (const r of n1a1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 62. NOTIFICATIONS-1A.2: Push Permission + Device Activation UX (12 TESTES: N1A2-01 - N1A2-12)
+console.log('\n--- GRUPO 62: NOTIFICATIONS-1A.2 (PUSH PERMISSION + DEVICE ACTIVATION UX - N1A2-01 - N1A2-12) ---');
+const n1a2Results = await runNotifications1a2Tests();
+for (const r of n1a2Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
