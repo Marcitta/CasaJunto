@@ -613,3 +613,14 @@ export interface ChaosState {
   updatedAt: any; // Firestore Timestamp
 }
 
+export interface PushDevice {
+  id: string;
+  userId: string;
+  token: string;
+  platform: 'WEB';
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt: string;
+}
+

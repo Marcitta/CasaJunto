@@ -13,6 +13,20 @@
         "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
       }
     },
+    "pushDevices": {
+      "collection": "users/{userId}/pushDevices",
+      "description": "Registered push notification devices for Firebase Cloud Messaging",
+      "fields": {
+        "id": { "type": "string", "description": "Unique device ID" },
+        "userId": { "type": "string", "description": "Auth UID owning this device" },
+        "token": { "type": "string", "description": "FCM registration token" },
+        "platform": { "type": "string", "description": "Client platform e.g. WEB" },
+        "active": { "type": "boolean", "description": "Whether device is currently active" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" },
+        "updatedAt": { "type": "string", "description": "ISO update timestamp" },
+        "lastSeenAt": { "type": "string", "description": "ISO last seen timestamp" }
+      }
+    },
     "families": {
       "collection": "families",
       "description": "Family tenant root document holding settings and configurations",

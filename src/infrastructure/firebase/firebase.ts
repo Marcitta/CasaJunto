@@ -20,3 +20,4 @@ export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestore
   : getFirestore(app);
 
 export { app };
+export { getFirebaseMessaging } from './firebaseConfig';

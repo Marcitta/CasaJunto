@@ -46,6 +46,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create, update: if isUser(userId);
       allow delete: if false;
+
+      // NOTIFICATIONS-1A.1: Subcoleção pushDevices para registro de dispositivos de notificações push (FCM)
+      // Somente o próprio usuário autenticado pode ler, criar ou alterar seus dispositivos
+      // Usuário A NÃO pode acessar pushDevices do usuário B
+      match /pushDevices/{deviceId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      }
     }
 
     // 2. Family Memberships: Top-level links between User and Family

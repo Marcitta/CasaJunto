@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getMessaging, isSupported, Messaging } from 'firebase/messaging';
 import appletConfig from '../../../firebase-applet-config.json';
 
 const getEnvVar = (key: string): string => {
@@ -46,6 +47,23 @@ export const auth = getAuth(app);
 export const db = databaseId && databaseId !== '(default)' ? getFirestore(app, databaseId) : getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();
 export const isFirebaseConfigured = isConfigured;
+
+let messagingPromise: Promise<Messaging | null> | null = null;
+
+export const getFirebaseMessaging = async (): Promise<Messaging | null> => {
+  if (typeof window === 'undefined') return null;
+  if (!messagingPromise) {
+    messagingPromise = isSupported()
+      .then((supported) => {
+        if (supported) {
+          return getMessaging(app);
+        }
+        return null;
+      })
+      .catch(() => null);
+  }
+  return messagingPromise;
+};
 
 export default app;
 
