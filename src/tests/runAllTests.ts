@@ -62,6 +62,7 @@ import { runNotifications1a1Tests } from './notifications1a1.test';
 import { runNotifications1a2Tests } from './notifications1a2.test';
 import { runNotifications1a2Hf1Tests } from './notifications1a2Hf1.test';
 import { runNotifications1a3Tests } from './notifications1a3.test';
+import { runNotifications1b1Tests } from './notifications1b1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -916,6 +917,20 @@ for (const r of hf1Results.results) {
 console.log('\n--- GRUPO 64: NOTIFICATIONS-1A.3 (MINIMAL PWA / IOS HOME SCREEN READINESS - N1A3-01 - N1A3-12) ---');
 const n1a3Results = await runNotifications1a3Tests();
 for (const r of n1a3Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 65. NOTIFICATIONS-1B.1: Backend FCM Foundation (12 TESTES: N1B1-01 - N1B1-12)
+console.log('\n--- GRUPO 65: NOTIFICATIONS-1B.1 (BACKEND FCM FOUNDATION - N1B1-01 - N1B1-12) ---');
+const n1b1Results = await runNotifications1b1Tests();
+for (const r of n1b1Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
