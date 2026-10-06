@@ -4,34 +4,31 @@
 
 import { runNotifications1b1Tests } from '../../../src/tests/notifications1b1.test';
 import { runNotifications1b1Hf1Tests } from '../../../src/tests/notifications1b1Hf1.test';
+import { runNotifications1b2Tests } from '../../../src/tests/notifications1b2.test';
 
 async function main() {
-  console.log('--- EXECUTANDO TESTES ISOLADOS DE CLOUD FUNCTIONS (NOTIFICATIONS-1B.1 & 1B.1-HF1) ---');
+  console.log('--- EXECUTANDO TESTES ISOLADOS DE CLOUD FUNCTIONS (NOTIFICATIONS-1B.1, 1B.1-HF1, 1B.2) ---');
   let failed = 0;
   let total = 0;
   let passed = 0;
 
-  const res1 = await runNotifications1b1Tests();
-  for (const r of res1.results) {
-    total++;
-    if (r.passed) {
-      passed++;
-      console.log(`[✓ PASS] ${r.testName}`);
-    } else {
-      failed++;
-      console.error(`[✗ FAIL] ${r.testName}: ${r.message}`);
-    }
-  }
+  const suites = [
+    { name: '1B.1', fn: runNotifications1b1Tests },
+    { name: '1B.1-HF1', fn: runNotifications1b1Hf1Tests },
+    { name: '1B.2', fn: runNotifications1b2Tests }
+  ];
 
-  const res2 = await runNotifications1b1Hf1Tests();
-  for (const r of res2.results) {
-    total++;
-    if (r.passed) {
-      passed++;
-      console.log(`[✓ PASS] ${r.testName}`);
-    } else {
-      failed++;
-      console.error(`[✗ FAIL] ${r.testName}: ${r.message}`);
+  for (const suite of suites) {
+    const res = await suite.fn();
+    for (const r of res.results) {
+      total++;
+      if (r.passed) {
+        passed++;
+        console.log(`[✓ PASS] ${r.testName}`);
+      } else {
+        failed++;
+        console.error(`[✗ FAIL] ${r.testName}: ${r.message}`);
+      }
     }
   }
 

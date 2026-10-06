@@ -64,6 +64,7 @@ import { runNotifications1a2Hf1Tests } from './notifications1a2Hf1.test';
 import { runNotifications1a3Tests } from './notifications1a3.test';
 import { runNotifications1b1Tests } from './notifications1b1.test';
 import { runNotifications1b1Hf1Tests } from './notifications1b1Hf1.test';
+import { runNotifications1b2Tests } from './notifications1b2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -946,6 +947,20 @@ for (const r of n1b1Results.results) {
 console.log('\n--- GRUPO 66: NOTIFICATIONS-1B.1-HF1 (SAFE INVALID TOKEN CLASSIFICATION - HF1-01 - HF1-10) ---');
 const n1b1Hf1Results = await runNotifications1b1Hf1Tests();
 for (const r of n1b1Hf1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 67. NOTIFICATIONS-1B.2: Reminder Candidate Resolution + Scheduler + Idempotency (25 TESTES: N1B2-01 - N1B2-25)
+console.log('\n--- GRUPO 67: NOTIFICATIONS-1B.2 (REMINDER CANDIDATE RESOLUTION + SCHEDULER + IDEMPOTENCY - N1B2-01 - N1B2-25) ---');
+const n1b2Results = await runNotifications1b2Tests();
+for (const r of n1b2Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
