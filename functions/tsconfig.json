@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "rootDir": "src",
     "module": "commonjs",
     "noImplicitReturns": true,
     "noUnusedLocals": false,
@@ -15,5 +16,8 @@
   "compileOnSave": true,
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/tests"
   ]
 }
