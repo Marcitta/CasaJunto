@@ -262,8 +262,9 @@ export async function runNotifications1b1Tests(): Promise<{
 
     if (res.successCount !== 1) throw new Error('Envio deveria ter sucesso');
     const sent = mockMessaging.getSentMessages()[0];
-    if (sent.notification.title !== payload.title) throw new Error('title divergente no FCM');
-    if (sent.notification.body !== payload.body) throw new Error('body divergente no FCM');
+    if (sent.notification) throw new Error('FCM payload não deve conter objeto notification (data-only requerido para evitar duplicação)');
+    if (sent.data.title !== payload.title) throw new Error('title divergente em sent.data');
+    if (sent.data.body !== payload.body) throw new Error('body divergente em sent.data');
     if (sent.data.customKey !== 'customValue') throw new Error('data customKey divergente');
     if (sent.data.notificationType !== 'TASK_REMINDER') throw new Error('data notificationType divergente');
   });

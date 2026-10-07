@@ -269,14 +269,18 @@ export class PushDeliveryService {
       result.deliveriesAttempted++;
 
       try {
-        // Envio via Firebase Admin Messaging
+        // Envio via Firebase Admin Messaging com DATA-ONLY payload
+        // para evitar que o SDK Android/iOS gere notificação visual automática
+        // duplicando a exibição do Service Worker (onBackgroundMessage).
+        const fcmData: Record<string, string> = {
+          ...(payload.data || {}),
+          title: payload.title,
+          body: payload.body
+        };
+
         await messaging.send({
           token,
-          notification: {
-            title: payload.title,
-            body: payload.body
-          },
-          data: payload.data || {}
+          data: fcmData
         });
 
         // Sucesso na entrega

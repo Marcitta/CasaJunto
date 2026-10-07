@@ -30,3 +30,28 @@ messaging.onBackgroundMessage((payload) => {
 
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
+
+// Manipulador de clique na notificação para navegação/foco
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const urlToOpen = (event.notification.data && event.notification.data.url) || '/';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // 1. Se já existir uma aba/janela aberta da mesma origem, foca nela
+      for (const client of clientList) {
+        if ('focus' in client) {
+          if (client.url && client.url.includes(self.location.origin)) {
+            return client.focus();
+          }
+        }
+      }
+
+      // 2. Se nenhuma janela estiver aberta, abre uma nova janela/PWA
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});

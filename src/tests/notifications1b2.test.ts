@@ -917,7 +917,9 @@ export async function runNotifications1b2Tests(): Promise<{
     });
 
     if (!sentPayload) throw new Error('Mensagem não foi enviada');
-    if (!sentPayload.notification?.title?.includes('CasaJunto')) throw new Error('Título deve identificar o CasaJunto');
+    if (sentPayload.notification) throw new Error('Payload não deve conter notification object (data-only requerido para evitar duplicação)');
+    const payloadTitle = sentPayload.data?.title || '';
+    if (!payloadTitle.includes('CasaJunto')) throw new Error('Título deve identificar o CasaJunto');
     if (sentPayload.data?.token || sentPayload.data?.secret || sentPayload.data?.privateKey) {
       throw new Error('Payload contém dados sensíveis proibidos!');
     }
