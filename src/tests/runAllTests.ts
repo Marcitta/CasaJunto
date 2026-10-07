@@ -66,6 +66,7 @@ import { runNotifications1b1Tests } from './notifications1b1.test';
 import { runNotifications1b1Hf1Tests } from './notifications1b1Hf1.test';
 import { runNotifications1b2Tests } from './notifications1b2.test';
 import { runNotifications1b2Hf1Tests } from './notifications1b2Hf1.test';
+import { runNotifications1cHf21Tests } from './notifications1cHf21.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -976,6 +977,20 @@ for (const r of n1b2Results.results) {
 console.log('\n--- GRUPO 68: NOTIFICATIONS-1B.2-HF1 (DELIVERY FINALIZATION SAFETY + CLOCK CONSISTENCY - HF1-01 - HF1-17) ---');
 const n1b2Hf1Results = await runNotifications1b2Hf1Tests();
 for (const r of n1b2Hf1Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 69. NOTIFICATIONS-1C-HF2.1: Safe Notification Click Navigation (15 TESTES: HF21-01 - HF21-15)
+console.log('\n--- GRUPO 69: NOTIFICATIONS-1C-HF2.1 (SAFE NOTIFICATION CLICK NAVIGATION - HF21-01 - HF21-15) ---');
+const n1cHf21Results = await runNotifications1cHf21Tests();
+for (const r of n1cHf21Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

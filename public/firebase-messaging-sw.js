@@ -31,19 +31,64 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
+/**
+ * Resolução segura de destino para impedir qualquer navegação externa.
+ * Regras:
+ * - default = '/'
+ * - aceitar somente rota same-origin
+ * - URL externa deve virar '/'
+ * - protocol-relative //evil.example deve virar '/'
+ * - javascript: deve virar '/'
+ * - data: deve virar '/'
+ * - URL inválida deve virar '/'
+ */
+function getSafeDestination(candidate) {
+  if (!candidate || typeof candidate !== 'string') {
+    return '/';
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return '/';
+  }
+  // Impedir protocol-relative, backslashes maliciosos e schemes perigosos
+  if (trimmed.startsWith('//') || trimmed.startsWith('/\\') || trimmed.startsWith('\\\\')) {
+    return '/';
+  }
+  try {
+    const resolved = new URL(trimmed, self.location.origin);
+    // Deve pertencer estritamente à mesma origem
+    if (resolved.origin !== self.location.origin) {
+      return '/';
+    }
+    // Se continha scheme explícito (://) que não correspondia à origem base
+    if (trimmed.includes('://') && !trimmed.startsWith(self.location.origin + '/')) {
+      return '/';
+    }
+    return resolved.pathname + resolved.search + resolved.hash;
+  } catch {
+    // URL inválida ou erro de parsing
+    return '/';
+  }
+}
+
 // Manipulador de clique na notificação para navegação/foco
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const urlToOpen = (event.notification.data && event.notification.data.url) || '/';
+  const rawUrl = event.notification.data && event.notification.data.url;
+  const urlToOpen = getSafeDestination(rawUrl);
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       // 1. Se já existir uma aba/janela aberta da mesma origem, foca nela
       for (const client of clientList) {
-        if ('focus' in client) {
-          if (client.url && client.url.includes(self.location.origin)) {
-            return client.focus();
+        if ('focus' in client && client.url) {
+          try {
+            if (new URL(client.url).origin === self.location.origin) {
+              return client.focus();
+            }
+          } catch {
+            // Ignora cliente com URL inválida
           }
         }
       }
