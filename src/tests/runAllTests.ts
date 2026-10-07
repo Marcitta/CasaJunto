@@ -65,6 +65,7 @@ import { runNotifications1a3Tests } from './notifications1a3.test';
 import { runNotifications1b1Tests } from './notifications1b1.test';
 import { runNotifications1b1Hf1Tests } from './notifications1b1Hf1.test';
 import { runNotifications1b2Tests } from './notifications1b2.test';
+import { runNotifications1b2Hf1Tests } from './notifications1b2Hf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -961,6 +962,20 @@ for (const r of n1b1Hf1Results.results) {
 console.log('\n--- GRUPO 67: NOTIFICATIONS-1B.2 (REMINDER CANDIDATE RESOLUTION + SCHEDULER + IDEMPOTENCY - N1B2-01 - N1B2-25) ---');
 const n1b2Results = await runNotifications1b2Tests();
 for (const r of n1b2Results.results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.testName}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 68. NOTIFICATIONS-1B.2-HF1: Delivery Finalization Safety + Clock Consistency (17 TESTES: HF1-01 - HF1-17)
+console.log('\n--- GRUPO 68: NOTIFICATIONS-1B.2-HF1 (DELIVERY FINALIZATION SAFETY + CLOCK CONSISTENCY - HF1-01 - HF1-17) ---');
+const n1b2Hf1Results = await runNotifications1b2Hf1Tests();
+for (const r of n1b2Hf1Results.results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

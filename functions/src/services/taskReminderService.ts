@@ -26,16 +26,28 @@ export const LEASE_DURATION_MS = 5 * 60 * 1000; // 5 minutos de trava de claim
 export const SCHEDULER_WINDOW_BEFORE_MS = 10 * 60 * 1000; // tolera até 10 min de atraso no scheduler
 export const SCHEDULER_WINDOW_AFTER_MS = 5 * 60 * 1000; // lookahead de até 5 min para a próxima janela
 
-export type ReminderStatus =
+/**
+ * Estados persistidos no Firestore (/notificationReminders/{idempotencyKey}).
+ */
+export type PersistedReminderStatus =
   | 'CLAIMED'
+  | 'DELIVERING'
   | 'SENT'
   | 'FAILED'
-  | 'SKIPPED_NO_ACTIVE_DEVICE'
+  | 'DELIVERY_UNKNOWN'
+  | 'SKIPPED_NO_ACTIVE_DEVICE';
+
+/**
+ * Estados efêmeros / observacionais do ciclo de execução (NÃO criam documento em /notificationReminders).
+ */
+export type EphemeralReminderStatus =
   | 'SKIPPED_NO_LINKED_USER'
   | 'SKIPPED_EXTERNAL_SUPPORT'
   | 'SKIPPED_UNASSIGNED'
   | 'SKIPPED_ALREADY_COMPLETED'
   | 'SKIPPED_OUT_OF_WINDOW';
+
+export type ReminderStatus = PersistedReminderStatus | EphemeralReminderStatus;
 
 export interface NotificationReminderDoc {
   id: string; // e.g. TASK_REMINDER_15M:${familyId}:${assignmentId}
@@ -43,10 +55,11 @@ export interface NotificationReminderDoc {
   assignmentId: string;
   userId?: string;
   type: 'TASK_REMINDER_15M';
-  status: ReminderStatus;
+  status: PersistedReminderStatus;
   scheduledAt: string; // ISO
   reminderAt: string; // ISO
   claimedAt: string; // ISO
+  deliveringAt?: string; // ISO
   sentAt?: string; // ISO
   updatedAt: string; // ISO
   attemptCount: number;
@@ -272,9 +285,12 @@ export class TaskReminderService {
     familyData: any;
     firestoreDb: any;
     messaging?: any;
-    referenceTime: Date;
+    referenceTime?: Date;
   }): Promise<ProcessRemindersResult> {
-    const { familyId, familyData, firestoreDb, messaging, referenceTime } = options;
+    const { familyId, familyData, firestoreDb, messaging } = options;
+    const now = options.referenceTime ?? new Date();
+    const nowIso = now.toISOString();
+    const nowMs = now.getTime();
     const familyTz = familyData?.timezone || DEFAULT_FAMILY_TIMEZONE;
 
     const result: ProcessRemindersResult = {
@@ -379,7 +395,7 @@ export class TaskReminderService {
 
       const reminderAt = new Date(scheduledAt.getTime() - REMINDER_LEAD_TIME_MS);
 
-      if (!this.isWithinReminderWindow(reminderAt, referenceTime)) {
+      if (!this.isWithinReminderWindow(reminderAt, now)) {
         result.remindersSkipped++;
         result.details.push({
           idempotencyKey: this.buildIdempotencyKey(familyId, assignmentId),
@@ -489,9 +505,10 @@ export class TaskReminderService {
       const reminderRef = firestoreDb.collection('notificationReminders').doc(idempotencyKey);
 
       let canProceedWithDelivery = false;
-      const nowIso = new Date().toISOString();
+      let skipStatus: ReminderStatus = 'SKIPPED_ALREADY_COMPLETED';
+      let skipReason: string | undefined = undefined;
 
-      // Execução da reserva atômica (transação ou create-if-absent)
+      // Execução da reserva atômica (transação ou fallback)
       try {
         if (typeof firestoreDb.runTransaction === 'function') {
           await firestoreDb.runTransaction(async (transaction: any) => {
@@ -517,36 +534,102 @@ export class TaskReminderService {
             } else {
               const current = snap.data() as NotificationReminderDoc;
 
-              // Se já foi enviado com sucesso, nunca reenvia
-              if (current.status === 'SENT' || current.status === 'SKIPPED_NO_ACTIVE_DEVICE') {
+              // 1. Estados terminais (SENT, SKIPPED_NO_ACTIVE_DEVICE, DELIVERY_UNKNOWN): nunca reenviar
+              if (
+                current.status === 'SENT' ||
+                current.status === 'SKIPPED_NO_ACTIVE_DEVICE' ||
+                current.status === 'DELIVERY_UNKNOWN'
+              ) {
                 canProceedWithDelivery = false;
+                skipStatus = current.status;
+                skipReason = `Estado terminal: ${current.status}`;
                 return;
               }
 
-              // Se está CLAIMED por outro processo recente (lease ativo), não interfere
-              const claimedAtMs = current.claimedAt ? new Date(current.claimedAt).getTime() : 0;
-              const isLeaseActive = Date.now() - claimedAtMs < LEASE_DURATION_MS;
+              // 2. Estado DELIVERING:
+              if (current.status === 'DELIVERING') {
+                const deliveringAtMs = current.deliveringAt
+                  ? new Date(current.deliveringAt).getTime()
+                  : (current.updatedAt ? new Date(current.updatedAt).getTime() : (current.claimedAt ? new Date(current.claimedAt).getTime() : 0));
+                const isDeliveringLeaseActive = nowMs - deliveringAtMs < LEASE_DURATION_MS;
 
-              if (current.status === 'CLAIMED' && isLeaseActive) {
-                canProceedWithDelivery = false;
+                if (isDeliveringLeaseActive) {
+                  // Outra execução ainda está efetuando o despacho (lease ativo)
+                  canProceedWithDelivery = false;
+                  skipStatus = 'DELIVERING';
+                  skipReason = 'Entrega em andamento (lease ativo)';
+                  return;
+                } else {
+                  // DELIVERING com lease expirado:
+                  // Não sabemos se o FCM entregou e apenas a persistência final falhou.
+                  // Regra crítica HF1-A / HF1-B: converter para DELIVERY_UNKNOWN, NUNCA reenviar automaticamente!
+                  transaction.update(reminderRef, {
+                    status: 'DELIVERY_UNKNOWN',
+                    updatedAt: nowIso,
+                    lastError: 'Lease expirou durante estado DELIVERING'
+                  });
+                  canProceedWithDelivery = false;
+                  skipStatus = 'DELIVERY_UNKNOWN';
+                  skipReason = 'DELIVERING expirado convertido para DELIVERY_UNKNOWN';
+                  return;
+                }
+              }
+
+              // 3. Estado CLAIMED:
+              if (current.status === 'CLAIMED') {
+                const claimedAtMs = current.claimedAt ? new Date(current.claimedAt).getTime() : 0;
+                const isClaimLeaseActive = nowMs - claimedAtMs < LEASE_DURATION_MS;
+
+                if (isClaimLeaseActive) {
+                  // Claim ativo por outro processo concorrente
+                  canProceedWithDelivery = false;
+                  skipStatus = 'CLAIMED';
+                  skipReason = 'Claim ativo por outro processo concorrente';
+                  return;
+                }
+
+                // Lease de CLAIMED expirou antes de entrar em DELIVERING (ex: processo interrompido antes do despacho)
+                if ((current.attemptCount || 0) >= MAX_REMINDER_ATTEMPTS) {
+                  canProceedWithDelivery = false;
+                  skipStatus = 'FAILED';
+                  skipReason = 'Máximo de tentativas atingido';
+                  return;
+                }
+
+                const nextAttempt = (current.attemptCount || 0) + 1;
+                transaction.update(reminderRef, {
+                  status: 'CLAIMED',
+                  claimedAt: nowIso,
+                  updatedAt: nowIso,
+                  attemptCount: nextAttempt
+                });
+                canProceedWithDelivery = true;
                 return;
               }
 
-              // Se atingiu maxAttempts, não cria loop infinito
-              if (current.attemptCount >= MAX_REMINDER_ATTEMPTS) {
-                canProceedWithDelivery = false;
+              // 4. Estado FAILED:
+              if (current.status === 'FAILED') {
+                if ((current.attemptCount || 0) >= MAX_REMINDER_ATTEMPTS) {
+                  canProceedWithDelivery = false;
+                  skipStatus = 'FAILED';
+                  skipReason = 'Máximo de tentativas atingido';
+                  return;
+                }
+
+                const nextAttempt = (current.attemptCount || 0) + 1;
+                transaction.update(reminderRef, {
+                  status: 'CLAIMED',
+                  claimedAt: nowIso,
+                  updatedAt: nowIso,
+                  attemptCount: nextAttempt
+                });
+                canProceedWithDelivery = true;
                 return;
               }
 
-              // Permite retry controlado se estiver FAILED ou claim expirado
-              const nextAttempt = (current.attemptCount || 0) + 1;
-              transaction.update(reminderRef, {
-                status: 'CLAIMED',
-                claimedAt: nowIso,
-                updatedAt: nowIso,
-                attemptCount: nextAttempt
-              });
-              canProceedWithDelivery = true;
+              canProceedWithDelivery = false;
+              skipStatus = 'SKIPPED_ALREADY_COMPLETED';
+              skipReason = `Status não elegível para claim: ${current.status}`;
             }
           });
         } else {
@@ -569,23 +652,84 @@ export class TaskReminderService {
             await reminderRef.set(newReminder);
             canProceedWithDelivery = true;
           } else {
-            const current = snap.data();
-            if (current.status === 'SENT' || current.status === 'SKIPPED_NO_ACTIVE_DEVICE' || current.attemptCount >= MAX_REMINDER_ATTEMPTS) {
+            const current = snap.data() as NotificationReminderDoc;
+
+            if (
+              current.status === 'SENT' ||
+              current.status === 'SKIPPED_NO_ACTIVE_DEVICE' ||
+              current.status === 'DELIVERY_UNKNOWN'
+            ) {
               canProceedWithDelivery = false;
+              skipStatus = current.status;
+              skipReason = `Estado terminal: ${current.status}`;
+            } else if (current.status === 'DELIVERING') {
+              const deliveringAtMs = current.deliveringAt
+                ? new Date(current.deliveringAt).getTime()
+                : (current.updatedAt ? new Date(current.updatedAt).getTime() : (current.claimedAt ? new Date(current.claimedAt).getTime() : 0));
+              const isDeliveringLeaseActive = nowMs - deliveringAtMs < LEASE_DURATION_MS;
+
+              if (isDeliveringLeaseActive) {
+                canProceedWithDelivery = false;
+                skipStatus = 'DELIVERING';
+                skipReason = 'Entrega em andamento (lease ativo)';
+              } else {
+                await reminderRef.update({
+                  status: 'DELIVERY_UNKNOWN',
+                  updatedAt: nowIso,
+                  lastError: 'Lease expirou durante estado DELIVERING'
+                });
+                canProceedWithDelivery = false;
+                skipStatus = 'DELIVERY_UNKNOWN';
+                skipReason = 'DELIVERING expirado convertido para DELIVERY_UNKNOWN';
+              }
+            } else if (current.status === 'CLAIMED') {
+              const claimedAtMs = current.claimedAt ? new Date(current.claimedAt).getTime() : 0;
+              const isClaimLeaseActive = nowMs - claimedAtMs < LEASE_DURATION_MS;
+
+              if (isClaimLeaseActive) {
+                canProceedWithDelivery = false;
+                skipStatus = 'CLAIMED';
+                skipReason = 'Claim ativo por outro processo concorrente';
+              } else if ((current.attemptCount || 0) >= MAX_REMINDER_ATTEMPTS) {
+                canProceedWithDelivery = false;
+                skipStatus = 'FAILED';
+                skipReason = 'Máximo de tentativas atingido';
+              } else {
+                const nextAttempt = (current.attemptCount || 0) + 1;
+                await reminderRef.update({
+                  status: 'CLAIMED',
+                  claimedAt: nowIso,
+                  updatedAt: nowIso,
+                  attemptCount: nextAttempt
+                });
+                canProceedWithDelivery = true;
+              }
+            } else if (current.status === 'FAILED') {
+              if ((current.attemptCount || 0) >= MAX_REMINDER_ATTEMPTS) {
+                canProceedWithDelivery = false;
+                skipStatus = 'FAILED';
+                skipReason = 'Máximo de tentativas atingido';
+              } else {
+                const nextAttempt = (current.attemptCount || 0) + 1;
+                await reminderRef.update({
+                  status: 'CLAIMED',
+                  claimedAt: nowIso,
+                  updatedAt: nowIso,
+                  attemptCount: nextAttempt
+                });
+                canProceedWithDelivery = true;
+              }
             } else {
-              await reminderRef.update({
-                status: 'CLAIMED',
-                claimedAt: nowIso,
-                updatedAt: nowIso,
-                attemptCount: (current.attemptCount || 0) + 1
-              });
-              canProceedWithDelivery = true;
+              canProceedWithDelivery = false;
+              skipStatus = 'SKIPPED_ALREADY_COMPLETED';
+              skipReason = `Status não elegível para claim: ${current.status}`;
             }
           }
         }
       } catch (claimErr: any) {
-        // Conflito transacional de concorrência ou erro de escrita
         canProceedWithDelivery = false;
+        skipStatus = 'SKIPPED_ALREADY_COMPLETED';
+        skipReason = claimErr?.message || 'Conflito de concorrência no claim';
       }
 
       if (!canProceedWithDelivery) {
@@ -594,13 +738,32 @@ export class TaskReminderService {
           idempotencyKey,
           familyId,
           assignmentId,
-          status: 'SKIPPED_ALREADY_COMPLETED',
-          reason: 'Já processado ou em processamento concorrente'
+          status: skipStatus,
+          reason: skipReason || 'Já processado ou em processamento concorrente'
         });
         continue;
       }
 
       result.remindersClaimed++;
+
+      // HF1-A: Transição explícita CLAIMED -> DELIVERING antes de chamar FCM
+      try {
+        await reminderRef.update({
+          status: 'DELIVERING',
+          deliveringAt: nowIso,
+          updatedAt: nowIso
+        });
+      } catch (deliveringErr: any) {
+        result.remindersFailed++;
+        result.details.push({
+          idempotencyKey,
+          familyId,
+          assignmentId,
+          status: 'FAILED',
+          reason: `Falha ao persistir DELIVERING antes de chamar FCM: ${deliveringErr?.message || deliveringErr}`
+        });
+        continue;
+      }
 
       // 8. Construção do Payload Seguro MVP (desacoplado de TaskAssignment)
       const payload: PushNotificationPayload = {
@@ -614,7 +777,7 @@ export class TaskReminderService {
       };
 
       // 9. Despacho Multi-Dispositivo via PushDeliveryService existente
-      let deliveryOutcome: ReminderStatus = 'FAILED';
+      let deliveryOutcome: PersistedReminderStatus = 'FAILED';
       let errorReason: string | undefined;
 
       try {
@@ -625,16 +788,15 @@ export class TaskReminderService {
           messaging
         });
 
-        // Semântica de sucesso multi-device: ao menos 1 dispositivo com sucesso -> SENT
+        // HF1-E: Semântica multi-device aprovada: ao menos 1 dispositivo com sucesso -> SENT
         if (pushResult.successCount > 0) {
           deliveryOutcome = 'SENT';
           result.remindersSent++;
         } else if (pushResult.devicesFound === 0 || pushResult.invalidTokensCount === pushResult.devicesFound) {
-          // Usuário não possui dispositivos ativos
           deliveryOutcome = 'SKIPPED_NO_ACTIVE_DEVICE';
           result.remindersSkipped++;
+          errorReason = 'Nenhum dispositivo ativo elegível';
         } else {
-          // Falha em todos os envios
           deliveryOutcome = 'FAILED';
           result.remindersFailed++;
           errorReason = pushResult.details[0]?.errorMessage || 'Falha no envio FCM';
@@ -645,13 +807,13 @@ export class TaskReminderService {
         errorReason = sendErr?.message || String(sendErr);
       }
 
-      // 10. Atualização do estado no Firestore
+      // 10. Atualização final do estado no Firestore
       const updateData: Record<string, any> = {
         status: deliveryOutcome,
-        updatedAt: new Date().toISOString()
+        updatedAt: nowIso
       };
       if (deliveryOutcome === 'SENT') {
-        updateData.sentAt = new Date().toISOString();
+        updateData.sentAt = nowIso;
       }
       if (errorReason) {
         updateData.lastError = errorReason;
@@ -659,8 +821,11 @@ export class TaskReminderService {
 
       try {
         await reminderRef.update(updateData);
-      } catch (updateErr) {
-        console.warn(`[TaskReminder] Falha ao atualizar status final do lembrete ${idempotencyKey}:`, updateErr);
+      } catch (updateErr: any) {
+        // HF1-C: Se a gravação SENT falhar, o documento permanece com status DELIVERING.
+        // No futuro, quando o lease expirar, o scheduler detectará DELIVERING expirado
+        // e converterá para DELIVERY_UNKNOWN, impedindo retry duplicado.
+        console.warn(`[TaskReminder] Falha ao atualizar status final do lembrete ${idempotencyKey}:`, updateErr?.message || updateErr);
       }
 
       result.details.push({

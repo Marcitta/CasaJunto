@@ -36,6 +36,8 @@ export {
   NotificationReminderDoc,
   ReminderCandidate,
   ReminderStatus,
+  PersistedReminderStatus,
+  EphemeralReminderStatus,
   ProcessRemindersResult,
   ProcessRemindersDetail
 } from './services/taskReminderService';
