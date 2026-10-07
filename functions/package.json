@@ -10,7 +10,7 @@
     "test": "tsx src/tests/pushDeliveryService.test.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",
