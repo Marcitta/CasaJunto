@@ -8,7 +8,7 @@
  * ai-studio-casajunto-a7d5bf10-b348-4406-bdbf-36200cb3f48c
  */
 
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps, App } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getMessaging, Messaging } from 'firebase-admin/messaging';
 
@@ -18,7 +18,7 @@ import { getMessaging, Messaging } from 'firebase-admin/messaging';
  */
 export const CASAJUNTO_FIRESTORE_DATABASE_ID = 'ai-studio-casajunto-a7d5bf10-b348-4406-bdbf-36200cb3f48c';
 
-let adminApp: admin.app.App | null = null;
+let adminApp: App | null = null;
 let firestoreDb: Firestore | null = null;
 let messagingInstance: Messaging | null = null;
 
@@ -26,12 +26,13 @@ let messagingInstance: Messaging | null = null;
  * Retorna ou inicializa o App do Firebase Admin usando as credenciais do ambiente Google Cloud.
  * PROIBIDO: Carregar chaves privadas, service accounts ou expor segredos.
  */
-export function getAdminApp(): admin.app.App {
+export function getAdminApp(): App {
   if (!adminApp) {
-    if (admin.apps.length > 0 && admin.apps[0]) {
-      adminApp = admin.apps[0];
+    const apps = getApps();
+    if (apps.length > 0 && apps[0]) {
+      adminApp = apps[0];
     } else {
-      adminApp = admin.initializeApp({
+      adminApp = initializeApp({
         projectId: process.env.GCLOUD_PROJECT || 'trusty-coder-386311'
       });
     }

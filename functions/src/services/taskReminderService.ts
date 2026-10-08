@@ -169,6 +169,70 @@ export class TaskReminderService {
   }
 
   /**
+   * Converte um objeto Date em uma string 'YYYY-MM-DD' no timezone IANA especificado,
+   * utilizando Intl.DateTimeFormat.formatToParts para garantir independência de localidade.
+   */
+  public static formatDateInTimeZone(
+    date: Date,
+    timeZone = DEFAULT_FAMILY_TIMEZONE
+  ): string {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZone || DEFAULT_FAMILY_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+
+    const parts = formatter.formatToParts(date);
+    let year = '';
+    let month = '';
+    let day = '';
+
+    for (const part of parts) {
+      if (part.type === 'year') year = part.value;
+      else if (part.type === 'month') month = part.value;
+      else if (part.type === 'day') day = part.value;
+    }
+
+    if (!year || !month || !day) {
+      throw new Error(`Falha ao formatar data no timezone ${timeZone}: year=${year}, month=${month}, day=${day}`);
+    }
+
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Calcula as datas candidatas ('YYYY-MM-DD') no timezone da família
+   * com base no referenceTime, limites da janela do scheduler e lead time de lembrete.
+   * Cobre de forma determinística transições de virada de dia (midnight).
+   */
+  public static getCandidateDates(
+    referenceTime: Date = new Date(),
+    timeZone = DEFAULT_FAMILY_TIMEZONE,
+    leadTimeMs = REMINDER_LEAD_TIME_MS,
+    windowBeforeMs = SCHEDULER_WINDOW_BEFORE_MS,
+    windowAfterMs = SCHEDULER_WINDOW_AFTER_MS
+  ): string[] {
+    const refMs = referenceTime.getTime();
+
+    // 1. Início da janela do scheduler (tolerância de atraso)
+    const windowStart = new Date(refMs - windowBeforeMs);
+    // 2. Instante de referência da execução
+    const refInstant = referenceTime;
+    // 3. Menor scheduledInstant que pode ter reminderAt na janela: (refTime - windowBefore + leadTime)
+    const earliestScheduled = new Date(refMs - windowBeforeMs + leadTimeMs);
+    // 4. Maior scheduledInstant que pode ter reminderAt na janela: (refTime + windowAfter + leadTime)
+    const latestScheduled = new Date(refMs + windowAfterMs + leadTimeMs);
+
+    const candidateSet = new Set<string>();
+    for (const instant of [windowStart, refInstant, earliestScheduled, latestScheduled]) {
+      candidateSet.add(this.formatDateInTimeZone(instant, timeZone));
+    }
+
+    return Array.from(candidateSet).sort();
+  }
+
+  /**
    * Avalia se a hora prevista do lembrete (reminderAt) está dentro da janela do scheduler.
    * Tolerância: entre [referenceTime - 10 min] e [referenceTime + 5 min].
    */
@@ -302,15 +366,47 @@ export class TaskReminderService {
       details: []
     };
 
-    // Busca assignments da família
-    const assignmentsRef = firestoreDb.collection('families').doc(familyId).collection('assignments');
-    const assignmentsSnap = await assignmentsRef.get();
+    // 1. Deriva datas candidatas no fuso horário da família
+    const candidateDates = this.getCandidateDates(
+      now,
+      familyTz,
+      REMINDER_LEAD_TIME_MS,
+      SCHEDULER_WINDOW_BEFORE_MS,
+      SCHEDULER_WINDOW_AFTER_MS
+    );
 
-    if (assignmentsSnap.size === 0) {
+    if (!candidateDates || candidateDates.length === 0) {
       return result;
     }
 
-    for (const asgDoc of assignmentsSnap.docs) {
+    // 2. Busca atribuições filtradas (scheduled_date e dueDate legada)
+    // NUNCA executa assignmentsRef.get() sem filtro
+    const assignmentsRef = firestoreDb.collection('families').doc(familyId).collection('assignments');
+    const [snapScheduled, snapDueDate] = await Promise.all([
+      assignmentsRef.where('scheduled_date', 'in', candidateDates).get(),
+      assignmentsRef.where('dueDate', 'in', candidateDates).get()
+    ]);
+
+    // 3. Deduplica atribuições por ID do documento
+    const docsById = new Map<string, any>();
+    if (snapScheduled && snapScheduled.docs) {
+      for (const doc of snapScheduled.docs) {
+        docsById.set(doc.id, doc);
+      }
+    }
+    if (snapDueDate && snapDueDate.docs) {
+      for (const doc of snapDueDate.docs) {
+        if (!docsById.has(doc.id)) {
+          docsById.set(doc.id, doc);
+        }
+      }
+    }
+
+    if (docsById.size === 0) {
+      return result;
+    }
+
+    for (const asgDoc of docsById.values()) {
       result.candidatesEvaluated++;
       const asg = asgDoc.data() || {};
       const assignmentId = asgDoc.id;

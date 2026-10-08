@@ -106,9 +106,29 @@ export async function runNotifications1b2Tests(): Promise<{
               }),
               collection: (subCol: string) => {
                 if (subCol === 'assignments') {
+                  const famAsgs = assignments[familyId] || {};
+                  const filterList = (field: string, op: string, val: any) => {
+                    let list = Object.entries(famAsgs).map(([id, data]) => ({ id, ...data }));
+                    if (op === 'in' && Array.isArray(val)) {
+                      list = list.filter(d => val.includes((d as any)[field]));
+                    } else if (op === '==') {
+                      list = list.filter(d => (d as any)[field] === val);
+                    }
+                    return {
+                      size: list.length,
+                      docs: list.map(d => ({
+                        id: d.id,
+                        exists: true,
+                        data: () => d
+                      }))
+                    };
+                  };
+
                   return {
+                    where: (field: string, op: string, val: any) => ({
+                      get: async () => filterList(field, op, val)
+                    }),
                     get: async () => {
-                      const famAsgs = assignments[familyId] || {};
                       return {
                         size: Object.keys(famAsgs).length,
                         docs: Object.entries(famAsgs).map(([id, data]) => ({

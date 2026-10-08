@@ -168,7 +168,7 @@ export async function runNotifications1cHf21Tests(): Promise<{ results: TestResu
           }
         }
       ],
-      openWindow: async () => {
+      openWindow: async (url?: string) => {
         openWindowCalled = true;
       }
     };
