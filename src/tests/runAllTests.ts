@@ -70,6 +70,7 @@ import { runNotifications1cHf21Tests } from './notifications1cHf21.test';
 import { runAssignmentVisualIdentityHf2Tests } from './assignmentVisualIdentityHf2.test';
 import { runFrequencyPhaseATestSuite } from './frequencyHydrationPhaseA.test';
 import { runRoomPresetPhaseBTestSuite } from './roomPresetPhaseB.test';
+import { runUnifiedAddRoomFlowTestSuite } from './unifiedAddRoomFlow.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1036,6 +1037,20 @@ for (const r of freqResults) {
 console.log('\n--- GRUPO 72: FASE B: PRESET 15 AMBIENTES E ASSOCIAÇÃO SEGURA (PRST-01 - PRST-16) ---');
 const presetResults = runRoomPresetPhaseBTestSuite();
 for (const r of presetResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 73. CASA JUNTO — FASE B: UNIFICAÇÃO DO FLUXO DE ADICIONAR AMBIENTE (15 TESTES: UFA-01 - UFA-15)
+console.log('\n--- GRUPO 73: FASE B: UNIFICAÇÃO DO FLUXO DE ADICIONAR AMBIENTE (UFA-01 - UFA-15) ---');
+const ufaResults = runUnifiedAddRoomFlowTestSuite();
+for (const r of ufaResults) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

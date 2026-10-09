@@ -201,8 +201,11 @@ export function runRoomPresetPhaseBTestSuite(): PhaseBTestResult[] {
     if (!html.includes('Casa familiar — 3 quartos')) {
       throw new Error('Título do preset deve ser exibido');
     }
-    if (!html.includes('15 Ambientes')) {
-      throw new Error('Badge de 15 ambientes deve ser exibida');
+    if (!html.includes('Modelo sugerido')) {
+      throw new Error('Badge de "Modelo sugerido" deve ser exibida');
+    }
+    if (!html.includes('Comece com uma sugestão de ambientes para organizar sua casa')) {
+      throw new Error('Descrição do cabeçalho do preset deve ser exibida');
     }
     if (!html.includes('Suíte') || !html.includes('Banheiro da suíte') || !html.includes('Área gourmet')) {
       throw new Error('Ambientes do preset devem estar renderizados no modal de pré-visualização');

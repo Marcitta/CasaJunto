@@ -21,6 +21,7 @@ import {
 } from '../data/roomTypes';
 import { RoomFormModal } from './RoomFormModal';
 import { RoomPresetPreviewModal } from './RoomPresetPreviewModal';
+import { RoomAddChoiceModal } from './RoomAddChoiceModal';
 
 export const HouseView: React.FC = () => {
   const { 
@@ -40,6 +41,7 @@ export const HouseView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'ARCHIVED'>('ACTIVE');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false);
+  const [isChoiceModalOpen, setIsChoiceModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'CREATE' | 'EDIT'>('CREATE');
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [prefillData, setPrefillData] = useState<{ name: string; type: string; icon?: string; color?: string } | null>(null);
@@ -166,22 +168,13 @@ export const HouseView: React.FC = () => {
         {isAdmin && (
           <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
             <button
-              id="btn-open-room-preset"
-              type="button"
-              onClick={() => setIsPresetModalOpen(true)}
-              className="px-3.5 py-2.5 rounded-xl border border-brand-primary/30 bg-brand-primary-soft hover:bg-brand-primary/10 text-brand-primary text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-2xs"
-            >
-              <Sparkles className="w-4 h-4 text-brand-primary" />
-              <span>Preset 15 Ambientes</span>
-            </button>
-            <button
               id="btn-open-create-room"
               type="button"
-              onClick={handleOpenCreateModal}
+              onClick={() => setIsChoiceModalOpen(true)}
               className="px-4 py-2.5 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-text-on-primary text-xs font-bold shadow-xs transition flex items-center gap-2 cursor-pointer"
             >
               <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>Novo Ambiente</span>
+              <span>Adicionar ambiente</span>
             </button>
           </div>
         )}
@@ -270,22 +263,14 @@ export const HouseView: React.FC = () => {
               <div className="space-y-4 pt-2">
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                   <button
-                    id="btn-empty-preset-rooms"
+                    id="btn-empty-add-room"
                     type="button"
-                    onClick={() => setIsPresetModalOpen(true)}
-                    className="px-5 py-3 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-text-on-primary text-xs font-bold shadow-xs transition inline-flex items-center gap-2 cursor-pointer"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    <span>Aplicar Preset Casa Familiar (15 Ambientes)</span>
-                  </button>
-                  <button
-                    id="btn-empty-create-room"
-                    type="button"
-                    onClick={handleOpenCreateModal}
-                    className="px-4 py-3 rounded-xl border border-border-default hover:bg-surface-subtle text-text-primary text-xs font-bold transition inline-flex items-center gap-2 cursor-pointer"
+                    onClick={() => setIsChoiceModalOpen(true)}
+                    className="px-6 py-3 rounded-xl bg-brand-primary hover:bg-brand-primary-hover text-text-on-primary text-xs font-bold shadow-xs transition inline-flex items-center gap-2 cursor-pointer"
+                    aria-label="Adicionar Primeiro Ambiente"
                   >
                     <Plus className="w-4 h-4 stroke-[2.5]" />
-                    <span>Adicionar Primeiro Ambiente</span>
+                    <span>Adicionar ambiente</span>
                   </button>
                 </div>
 
@@ -485,6 +470,14 @@ export const HouseView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Choice Modal (Criar personalizado vs Lista modelo) */}
+      <RoomAddChoiceModal
+        isOpen={isChoiceModalOpen}
+        onClose={() => setIsChoiceModalOpen(false)}
+        onSelectCustom={handleOpenCreateModal}
+        onSelectPreset={() => setIsPresetModalOpen(true)}
+      />
 
       {/* Room Modal (Create / Edit) */}
       <RoomFormModal

@@ -257,14 +257,14 @@ export const RoomPresetPreviewModal: React.FC<RoomPresetPreviewModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 id="room-preset-title" className="text-lg sm:text-xl font-bold text-text-primary">
-                  {FAMILY_3_BEDROOMS_PRESET.name}
+                  Casa familiar — 3 quartos
                 </h2>
                 <span className="px-2 py-0.5 rounded-full bg-brand-primary-soft text-brand-primary text-[11px] font-extrabold">
-                  15 Ambientes
+                  Modelo sugerido
                 </span>
               </div>
               <p className="text-xs text-text-secondary mt-1 max-w-2xl leading-relaxed">
-                {FAMILY_3_BEDROOMS_PRESET.description} Você pode selecionar individualmente quais deseja criar e personalizar os nomes antes de salvar.
+                Comece com uma sugestão de ambientes para organizar sua casa. Escolha os que fazem parte do seu lar, personalize os nomes e adicione apenas o que precisar.
               </p>
             </div>
           </div>
