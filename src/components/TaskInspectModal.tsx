@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { EditFamilyTaskModal } from './EditFamilyTaskModal';
 import { getActiveMembers } from '../domain/selectors';
 import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
+import { formatFrequencyLabel } from '../utils/frequencyUtils';
 
 export const TaskInspectModal: React.FC = () => {
   const { 
@@ -37,6 +38,21 @@ export const TaskInspectModal: React.FC = () => {
   const supportName = support?.name || 'Apoio externo';
   const assigned = !isExternal ? members.find(m => m.id === activeTaskForInspect.assignedMemberId) : undefined;
   const activeMembers = getActiveMembers(members);
+
+  const linkedRoutine = activeTaskForInspect.familyTaskId
+    ? familyTasks?.find(ft => ft.id === activeTaskForInspect.familyTaskId)
+    : undefined;
+  const isRoutineMissing = Boolean(
+    (activeTaskForInspect.familyTaskId && !linkedRoutine) || activeTaskForInspect.routineNotFound
+  );
+
+  const formattedFrequency = formatFrequencyLabel({
+    frequency: linkedRoutine?.frequency || activeTaskForInspect.frequency,
+    preferredDays: linkedRoutine?.preferred_days || linkedRoutine?.preferredDays || activeTaskForInspect.preferredDays,
+    dayOfMonth: linkedRoutine?.day_of_month ?? linkedRoutine?.dayOfMonth ?? activeTaskForInspect.dayOfMonth,
+    routineNotFound: isRoutineMissing,
+    isAdHoc: !activeTaskForInspect.familyTaskId
+  });
 
   const handleAssigneeChange = async (targetId: string, confirmInProgress = false) => {
     setAssignError(null);
@@ -223,8 +239,19 @@ export const TaskInspectModal: React.FC = () => {
             <span className="flex items-center gap-1.5 text-text-muted">
               <Clock className="w-3.5 h-3.5" /> Frequência:
             </span>
-            <span className="font-bold text-text-primary">{activeTaskForInspect.frequency}</span>
+            <span
+              id="inspect-modal-frequency"
+              className={`font-bold ${isRoutineMissing ? 'text-state-warning' : 'text-text-primary'}`}
+            >
+              {formattedFrequency}
+            </span>
           </div>
+          {isRoutineMissing && (
+            <div className="p-2 rounded-xl bg-state-warning-soft border border-state-warning/30 text-state-warning text-[11px] flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>Rotina vinculada não encontrada no cadastro.</span>
+            </div>
+          )}
           {activeTaskForInspect.scheduledStart && (
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-text-muted">

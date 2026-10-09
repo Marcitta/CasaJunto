@@ -43,6 +43,7 @@ import { useAuth } from './AuthContext';
 import { doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../infrastructure/firebase/firebaseConfig';
 import { calculateAgeFromBirthDate } from '../utils/dateUtils';
+import { resolveFrequencyFromRoutine } from '../utils/frequencyUtils';
 import { FirestoreMappers } from '../infrastructure/firebase/mappers';
 import { DistributionService } from '../application/services/DistributionService';
 import { RoutineContinuityService } from '../application/services/RoutineContinuityService';
@@ -189,6 +190,7 @@ export function mapAssignmentsToTasks(params: {
     const roomObj = rooms.find(r => r.id === asg.room_id);
     const fallbackRoomType = master?.room_type || 'geral';
     const ft = familyTasks.find(f => f.id === asg.family_task_id || f.id === (asg as any).familyTaskId);
+    const freqInfo = resolveFrequencyFromRoutine(asg, ft);
     const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
     const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
 
@@ -225,7 +227,10 @@ export function mapAssignmentsToTasks(params: {
       unassignedReason: asg.unassigned_reason,
       isUnassigned: asg.is_unassigned,
       factors: asg.factors,
-      frequency: 'DAILY',
+      frequency: freqInfo.frequency,
+      preferredDays: freqInfo.preferredDays,
+      dayOfMonth: freqInfo.dayOfMonth,
+      routineNotFound: freqInfo.routineNotFound,
       effort: master?.effort_level ? master.effort_level * 5 : 10,
       durationMinutes: master?.duration_minutes || 20,
       category: master?.category || 'cleaning',
@@ -772,6 +777,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (asgSnap.exists()) {
           const asg = FirestoreMappers.toTaskAssignment(asgSnap.id, asgSnap.data());
           const ft = familyTasks.find(f => f.id === asg.family_task_id);
+          const freqInfo = resolveFrequencyFromRoutine(asg, ft);
           const master = allMasterTasks.find(tm => tm.id === asg.task_id);
           existingTask = {
             id: asg.id,
@@ -784,7 +790,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             assigneeId: asg.is_unassigned ? '' : asg.member_id,
             status: asg.status === 'COMPLETED' ? 'DONE' : 'PENDING',
             dueDate: asg.scheduled_date || getTodayDateString(),
-            frequency: 'DAILY',
+            frequency: freqInfo.frequency,
+            preferredDays: freqInfo.preferredDays,
+            dayOfMonth: freqInfo.dayOfMonth,
+            routineNotFound: freqInfo.routineNotFound,
             effort: master?.effort || 10,
             createdAt: asg.scheduled_date || getTodayDateString(),
             updatedAt: asg.scheduled_date || getTodayDateString(),
@@ -1857,6 +1866,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const roomObj = rooms.find(r => r.id === asg.room_id);
       const fallbackRoomType = master?.room_type || 'geral';
       const ft = routinesToUse.find(f => f.id === asg.family_task_id || f.id === (asg as any).familyTaskId);
+      const freqInfo = resolveFrequencyFromRoutine(asg, ft);
       const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
       const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
       return {
@@ -1877,7 +1887,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         unassignedReason: asg.unassigned_reason,
         isUnassigned: asg.is_unassigned,
         factors: asg.factors,
-        frequency: (ft?.frequency as any) || 'DAILY',
+        frequency: freqInfo.frequency,
+        preferredDays: freqInfo.preferredDays,
+        dayOfMonth: freqInfo.dayOfMonth,
+        routineNotFound: freqInfo.routineNotFound,
         effort: master?.effort_level ? master.effort_level * 5 : 10,
         durationMinutes: master?.duration_minutes || 20,
         category: master?.category || 'cleaning',

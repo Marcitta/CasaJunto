@@ -168,6 +168,9 @@ export interface Task {
   assigneeName?: string;
   assignedMemberId?: string;
   frequency: TaskFrequency;
+  preferredDays?: number[];
+  dayOfMonth?: number;
+  routineNotFound?: boolean;
   effort: number; // esforço ou pontos (ex: 5, 10, 15)
   status: TaskStatus;
   dueDate: string; // YYYY-MM-DD

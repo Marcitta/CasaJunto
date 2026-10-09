@@ -68,6 +68,7 @@ import { runNotifications1b2Tests } from './notifications1b2.test';
 import { runNotifications1b2Hf1Tests } from './notifications1b2Hf1.test';
 import { runNotifications1cHf21Tests } from './notifications1cHf21.test';
 import { runAssignmentVisualIdentityHf2Tests } from './assignmentVisualIdentityHf2.test';
+import { runFrequencyPhaseATestSuite } from './frequencyHydrationPhaseA.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1013,6 +1014,20 @@ for (const r of aviResults) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.actual}`);
+  }
+}
+
+// 71. CASA JUNTO — FASE A: CORREÇÃO DE FREQUÊNCIAS (9 TESTES: FREQ-01 - FREQ-09)
+console.log('\n--- GRUPO 71: FASE A: CORREÇÃO DE FREQUÊNCIAS (FREQ-01 - FREQ-09) ---');
+const freqResults = await runFrequencyPhaseATestSuite();
+for (const r of freqResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
   }
 }
 
