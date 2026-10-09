@@ -69,6 +69,7 @@ import { runNotifications1b2Hf1Tests } from './notifications1b2Hf1.test';
 import { runNotifications1cHf21Tests } from './notifications1cHf21.test';
 import { runAssignmentVisualIdentityHf2Tests } from './assignmentVisualIdentityHf2.test';
 import { runFrequencyPhaseATestSuite } from './frequencyHydrationPhaseA.test';
+import { runRoomPresetPhaseBTestSuite } from './roomPresetPhaseB.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1021,6 +1022,20 @@ for (const r of aviResults) {
 console.log('\n--- GRUPO 71: FASE A: CORREÇÃO DE FREQUÊNCIAS (FREQ-01 - FREQ-09) ---');
 const freqResults = await runFrequencyPhaseATestSuite();
 for (const r of freqResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 72. CASA JUNTO — FASE B: PRESET 15 AMBIENTES E ASSOCIAÇÃO SEGURA (16 TESTES: PRST-01 - PRST-16)
+console.log('\n--- GRUPO 72: FASE B: PRESET 15 AMBIENTES E ASSOCIAÇÃO SEGURA (PRST-01 - PRST-16) ---');
+const presetResults = runRoomPresetPhaseBTestSuite();
+for (const r of presetResults) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

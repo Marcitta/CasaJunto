@@ -5,6 +5,7 @@ import { CatalogTemplate, ExecutionTarget } from '../types';
 import { getTodayDateString } from '../data/mockData';
 import { ExecutionTargetSelector } from './DomesticSupport/ExecutionTargetSelector';
 import { validateFamilyTaskExecutionTarget } from '../services/domesticSupportService';
+import { matchRoomForTask } from '../data/roomTypes';
 
 interface TaskCreationModalProps {
   isOpen: boolean;
@@ -40,17 +41,21 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
       setTitle(template.title);
       setDescription(template.description);
       setFrequency(template.suggestedFrequency || 'DAILY');
-      // Auto-match room if any active room has same name or type
-      const matched = activeRooms.find(
-        r => r.name.toLowerCase() === template.defaultRoom.toLowerCase() ||
-             r.type.toLowerCase() === template.defaultRoom.toLowerCase()
-      );
-      setSelectedRoomId(matched?.id || (activeRooms.length > 0 ? activeRooms[0].id : ''));
+      // Auto-match room if unambiguous, otherwise require explicit selection
+      const matchResult = matchRoomForTask({
+        taskRoomType: template.defaultRoom,
+        activeRooms
+      });
+      if (!matchResult.isAmbiguous && matchResult.matchedRoomId) {
+        setSelectedRoomId(matchResult.matchedRoomId);
+      } else {
+        setSelectedRoomId('');
+      }
     } else {
       setTitle('');
       setDescription('');
       setFrequency('DAILY');
-      setSelectedRoomId(activeRooms.length > 0 ? activeRooms[0].id : '');
+      setSelectedRoomId('');
     }
     setTaskDate(selectedDate || getTodayDateString());
     setScheduledTime('');
@@ -228,6 +233,9 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
                 onChange={e => setSelectedRoomId(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-border-default text-xs font-semibold text-text-primary focus:outline-none focus:border-brand-primary bg-surface-subtle disabled:opacity-50"
               >
+                <option value="" disabled>
+                  Selecione um cômodo...
+                </option>
                 {activeRooms.map(room => (
                   <option key={room.id} value={room.id}>
                     {room.name} ({room.type})

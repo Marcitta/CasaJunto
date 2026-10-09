@@ -40,7 +40,7 @@ import {
 } from '../data/mockData';
 import { demoFamilyTasks } from '../data/demoData';
 import { useAuth } from './AuthContext';
-import { doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, setDoc, updateDoc, deleteDoc, runTransaction, writeBatch } from 'firebase/firestore';
 import { db } from '../infrastructure/firebase/firebaseConfig';
 import { calculateAgeFromBirthDate } from '../utils/dateUtils';
 import { resolveFrequencyFromRoutine } from '../utils/frequencyUtils';
@@ -50,7 +50,7 @@ import { RoutineContinuityService } from '../application/services/RoutineContinu
 import { getFamilyLocalDate } from '../domain/utils/dateTimeUtils';
 import { RebalanceResult, SafetyService } from '../domain/distribution';
 import { allMasterTasks } from '../data/tasks';
-import { isValidRoomType, ROOM_TYPE_OPTIONS } from '../data/roomTypes';
+import { isValidRoomType, ROOM_TYPE_OPTIONS, normalizeRoomName } from '../data/roomTypes';
 import { TaskCompletionService } from '../application/services/TaskCompletionService';
 import { getDayOfWeek } from '../domain/utils/dateTimeUtils';
 import { 
@@ -106,6 +106,7 @@ export interface AppContextType {
   deleteProtectedTime: (id: string) => Promise<void>;
   loadRealRooms: () => Promise<void>;
   addRoom: (data: { name: string; type: string; icon?: string; color?: string }) => Promise<Room>;
+  addRoomsBatch?: (roomsData: Array<{ name: string; type: string; icon?: string; color?: string }>) => Promise<{ added: Room[]; skipped: Array<{ name: string; reason: string }> }>;
   updateRoom: (roomId: string, updates: { name?: string; type?: string; icon?: string; color?: string }) => Promise<void>;
   deactivateRoom: (roomId: string) => Promise<void>;
   reactivateRoom: (roomId: string) => Promise<void>;
@@ -992,7 +993,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const cleanDesc = (newTask.description || '').trim();
-    const cleanRoomId = newTask.roomId || rooms[0]?.id || 'room-geral';
+    const cleanRoomId = (newTask.roomId || '').trim();
+    if (!cleanRoomId) {
+      throw new Error('Selecione um ambiente da casa para a tarefa.');
+    }
     const roomObj = rooms.find(r => r.id === cleanRoomId);
     const cleanRoomName = roomObj?.name || newTask.roomName || 'Geral';
     const freq = (newTask.frequency || 'DAILY').toUpperCase();
@@ -1678,6 +1682,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error(`Tipo de ambiente inválido: "${data.type}". Escolha uma categoria canônica.`);
     }
 
+    const norm = normalizeRoomName(trimmedName);
+    const alreadyExists = rooms.some(
+      r => r.active !== false && normalizeRoomName(r.name) === norm
+    );
+    if (alreadyExists) {
+      throw new Error(`Já existe um ambiente ativo com o nome "${trimmedName}" nesta família.`);
+    }
+
     const now = new Date().toISOString();
     const typeOpt = ROOM_TYPE_OPTIONS.find(o => o.key === data.type);
     const resolvedIcon = data.icon || typeOpt?.icon || 'Home';
@@ -1727,6 +1739,94 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     return newRoom;
+  };
+
+  const addRoomsBatch = async (
+    roomsData: Array<{ name: string; type: string; icon?: string; color?: string }>
+  ): Promise<{ added: Room[]; skipped: Array<{ name: string; reason: string }> }> => {
+    if (currentMember && currentMember.role && currentMember.role !== 'ADMIN' && !isDemoMode) {
+      throw new Error('Apenas administradores podem gerenciar ambientes da família.');
+    }
+
+    const familyId = authFamily?.id || family.id || 'fam-demo';
+    const isDemo = isDemoMode || !authFamily;
+    const now = new Date().toISOString();
+
+    const added: Room[] = [];
+    const skipped: Array<{ name: string; reason: string }> = [];
+
+    // Prevenção de duplicações: conjunto de nomes normalizados dos ambientes ativos da família
+    const existingNormNames = new Set(
+      rooms
+        .filter(r => r.active !== false)
+        .map(r => normalizeRoomName(r.name))
+    );
+
+    const roomsToInsert: Room[] = [];
+
+    for (const item of roomsData) {
+      const trimmedName = item.name.trim();
+      if (!trimmedName) {
+        skipped.push({ name: item.name, reason: 'Nome vazio' });
+        continue;
+      }
+      if (trimmedName.length > 40) {
+        skipped.push({ name: trimmedName, reason: 'Nome excede 40 caracteres' });
+        continue;
+      }
+      if (!isValidRoomType(item.type)) {
+        skipped.push({ name: trimmedName, reason: `Tipo de ambiente inválido: "${item.type}"` });
+        continue;
+      }
+
+      const norm = normalizeRoomName(trimmedName);
+      if (existingNormNames.has(norm)) {
+        skipped.push({ name: trimmedName, reason: 'Ambiente já cadastrado nesta família' });
+        continue;
+      }
+
+      existingNormNames.add(norm);
+
+      const typeOpt = ROOM_TYPE_OPTIONS.find(o => o.key === item.type);
+      const resolvedIcon = item.icon || typeOpt?.icon || 'Home';
+      const resolvedColor = item.color || typeOpt?.defaultColor || '#5b32a3';
+
+      const roomId = isDemo
+        ? `room-demo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+        : doc(collection(db, 'families', familyId, 'rooms')).id;
+
+      const newRoom: Room = {
+        id: roomId,
+        family_id: familyId,
+        name: trimmedName,
+        type: item.type,
+        icon: resolvedIcon,
+        color: resolvedColor,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+        created_at: now,
+        updated_at: now
+      };
+
+      roomsToInsert.push(newRoom);
+      added.push(newRoom);
+    }
+
+    if (roomsToInsert.length > 0) {
+      if (!isDemo && db && familyId) {
+        const batch = writeBatch(db);
+        roomsToInsert.forEach(room => {
+          const roomRef = doc(db, 'families', familyId, 'rooms', room.id);
+          batch.set(roomRef, FirestoreMappers.fromRoom(room));
+        });
+        await batch.commit();
+      }
+
+      setRooms(prev => [...prev, ...roomsToInsert]);
+    }
+
+    return { added, skipped };
   };
 
   const updateRoom = async (
@@ -2609,6 +2709,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteProtectedTime,
         loadRealRooms,
         addRoom,
+        addRoomsBatch,
         updateRoom,
         deactivateRoom,
         reactivateRoom,

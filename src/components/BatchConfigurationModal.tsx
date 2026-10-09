@@ -3,6 +3,7 @@ import { X, Check, Clock, Home, Calendar, AlertCircle, Sparkles } from 'lucide-r
 import { TaskMaster } from '../types';
 import { Room, FamilyTask, BatchAddRoutineInput, ExecutionTarget, DomesticSupport } from '../types';
 import { taskCategoryLabels } from '../data/tasks';
+import { matchRoomForTask } from '../data/roomTypes';
 import { ExecutionTargetSelector } from './DomesticSupport/ExecutionTargetSelector';
 import { AppContext } from '../context/AppContext';
 
@@ -94,19 +95,19 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
       } else if (existing && existing.roomId && activeRooms.some(r => r.id === existing.roomId)) {
         matchedRoomId = existing.roomId;
       } else if (task.room_type && activeRooms.length > 0) {
-        const matches = activeRooms.filter(r =>
-          (r.type && r.type.toLowerCase() === task.room_type.toLowerCase()) ||
-          r.name.toLowerCase().includes(task.room_type.toLowerCase())
-        );
-        if (matches.length === 1) {
-          matchedRoomId = matches[0].id;
-        } else if (matches.length > 1) {
-          matchedRoomId = matches[0].id;
+        const matchResult = matchRoomForTask({
+          taskRoomType: task.room_type,
+          activeRooms
+        });
+        if (!matchResult.isAmbiguous && matchResult.matchedRoomId) {
+          matchedRoomId = matchResult.matchedRoomId;
         } else {
-          matchedRoomId = activeRooms[0].id;
+          // Ambiguidade (>1 matches) ou 0 matches: sem fallback silencioso para o primeiro cômodo!
+          // Exige escolha explícita do usuário.
+          matchedRoomId = '';
         }
-      } else if (activeRooms.length > 0) {
-        matchedRoomId = activeRooms[0].id;
+      } else {
+        matchedRoomId = '';
       }
 
       // Frequency matching logic
@@ -476,16 +477,27 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                     <div>
                       <label
                         htmlFor={`task-room-${task.id}`}
-                        className="block font-medium text-text-secondary mb-1 flex items-center gap-1"
+                        className="block font-medium text-text-secondary mb-1 flex items-center justify-between"
                       >
-                        <Home className="w-3.5 h-3.5" />
-                        Cômodo *
+                        <span className="flex items-center gap-1">
+                          <Home className="w-3.5 h-3.5" />
+                          Cômodo *
+                        </span>
+                        {!cfg.roomId && task.room_type && activeRooms.length > 0 && (
+                          <span className="text-[10px] text-state-warning font-semibold">
+                            {activeRooms.filter(r => (r.type && r.type.toLowerCase() === task.room_type.toLowerCase()) || r.name.toLowerCase().includes(task.room_type.toLowerCase())).length > 1
+                              ? 'Ambíguo: escolha explícita'
+                              : 'Obrigatório'}
+                          </span>
+                        )}
                       </label>
                       <select
                         id={`task-room-${task.id}`}
                         value={cfg.roomId}
                         onChange={e => handleUpdateConfig(task.id, { roomId: e.target.value })}
-                        className="w-full bg-surface-subtle border border-border-default rounded-lg px-2.5 py-1.5 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                        className={`w-full bg-surface-subtle border rounded-lg px-2.5 py-1.5 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none ${
+                          !cfg.roomId ? 'border-state-warning/50' : 'border-border-default'
+                        }`}
                         required
                         aria-label={`Cômodo para ${task.name}`}
                       >

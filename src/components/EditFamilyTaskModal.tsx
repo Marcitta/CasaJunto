@@ -74,7 +74,8 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
     if (routine) {
       setCustomTitle(routine.customTitle || routine.custom_title || '');
       setCustomDescription(routine.customDescription || routine.custom_description || '');
-      setSelectedRoomId(routine.room_id || routine.roomId || (activeRooms[0]?.id || ''));
+      const rawRoomId = routine.room_id || routine.roomId || '';
+      setSelectedRoomId(activeRooms.some(r => r.id === rawRoomId) ? rawRoomId : (rawRoomId || ''));
       setDurationMinutes(routine.estimated_minutes || 20);
       setPreferredTime(routine.preferred_time || routine.preferredTime || '08:00');
       const f = (routine.frequency || 'DAILY').toUpperCase();
@@ -90,7 +91,8 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
     } else if (initialTask) {
       setCustomTitle('');
       setCustomDescription('');
-      setSelectedRoomId(initialTask.roomId || (activeRooms[0]?.id || ''));
+      const rawRoomId = initialTask.roomId || '';
+      setSelectedRoomId(activeRooms.some(r => r.id === rawRoomId) ? rawRoomId : (rawRoomId || ''));
       setDurationMinutes(initialTask.durationMinutes || initialTask.estimatedMinutes || 20);
       setPreferredTime(initialTask.scheduledStart || '08:00');
       const f = (initialTask.frequency || 'DAILY').toUpperCase();
@@ -316,6 +318,7 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
               onChange={e => setSelectedRoomId(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-border-default text-xs font-semibold text-text-primary focus:outline-none focus:border-brand-primary bg-surface-subtle"
             >
+              <option value="" disabled>Selecione um ambiente...</option>
               {activeRooms.map(room => (
                 <option key={room.id} value={room.id}>
                   {room.name} ({room.type || 'Geral'})

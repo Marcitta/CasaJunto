@@ -6,7 +6,8 @@ import {
   ROOM_TYPE_OPTIONS, 
   isValidRoomType, 
   ROOM_ICON_MAP,
-  SafeRoomIcon 
+  SafeRoomIcon,
+  detectRoomTypeFromName
 } from '../data/roomTypes';
 
 interface RoomFormModalProps {
@@ -42,9 +43,10 @@ export const RoomFormModal: React.FC<RoomFormModalProps> = ({
   mode
 }) => {
   const [name, setName] = useState('');
-  const [type, setType] = useState('kitchen');
-  const [icon, setIcon] = useState('Utensils');
-  const [color, setColor] = useState('#F59E0B');
+  const [type, setType] = useState('');
+  const [icon, setIcon] = useState('Home');
+  const [color, setColor] = useState('#5b32a3');
+  const [isTypeManuallyModified, setIsTypeManuallyModified] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -60,24 +62,43 @@ export const RoomFormModal: React.FC<RoomFormModalProps> = ({
       setType(validT);
       setIcon(initialData.icon || ROOM_TYPE_OPTIONS.find(o => o.key === validT)?.icon || 'Home');
       setColor(initialData.color || ROOM_TYPE_OPTIONS.find(o => o.key === validT)?.defaultColor || '#5b32a3');
+      setIsTypeManuallyModified(true);
     } else if (prefillData) {
       setName(prefillData.name || '');
-      const validT = prefillData.type && isValidRoomType(prefillData.type) ? prefillData.type : 'kitchen';
+      const validT = prefillData.type && isValidRoomType(prefillData.type) ? prefillData.type : '';
       setType(validT);
-      setIcon(prefillData.icon || ROOM_TYPE_OPTIONS.find(o => o.key === validT)?.icon || 'Utensils');
-      setColor(prefillData.color || ROOM_TYPE_OPTIONS.find(o => o.key === validT)?.defaultColor || '#F59E0B');
+      setIcon(prefillData.icon || ROOM_TYPE_OPTIONS.find(o => o.key === validT)?.icon || 'Home');
+      setColor(prefillData.color || ROOM_TYPE_OPTIONS.find(o => o.key === validT)?.defaultColor || '#5b32a3');
+      setIsTypeManuallyModified(Boolean(validT));
     } else {
       setName('');
-      setType('kitchen');
-      setIcon('Utensils');
-      setColor('#F59E0B');
+      setType('');
+      setIcon('Home');
+      setColor('#5b32a3');
+      setIsTypeManuallyModified(false);
     }
   }, [isOpen, mode, initialData, prefillData]);
 
   if (!isOpen) return null;
 
+  const handleNameChange = (newName: string) => {
+    setName(newName);
+    if (!isTypeManuallyModified && mode === 'CREATE') {
+      const detected = detectRoomTypeFromName(newName);
+      if (detected) {
+        setType(detected);
+        const opt = ROOM_TYPE_OPTIONS.find(o => o.key === detected);
+        if (opt) {
+          setIcon(opt.icon);
+          setColor(opt.defaultColor);
+        }
+      }
+    }
+  };
+
   const handleTypeChange = (newType: string) => {
     setType(newType);
+    setIsTypeManuallyModified(true);
     const opt = ROOM_TYPE_OPTIONS.find(o => o.key === newType);
     if (opt) {
       setIcon(opt.icon);
@@ -172,7 +193,7 @@ export const RoomFormModal: React.FC<RoomFormModalProps> = ({
             <input
               type="text"
               value={name}
-              onChange={e => setName(e.target.value)}
+              onChange={e => handleNameChange(e.target.value)}
               placeholder="Ex: Cozinha Americana, Suíte do Casal, Banheiro Social..."
               maxLength={40}
               autoFocus
@@ -196,6 +217,9 @@ export const RoomFormModal: React.FC<RoomFormModalProps> = ({
               disabled={isSubmitting}
               className="w-full px-3.5 py-2.5 rounded-xl border border-border-default bg-surface-card text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary/40 cursor-pointer"
             >
+              <option value="" disabled>
+                Selecione a categoria do cômodo...
+              </option>
               {ROOM_TYPE_OPTIONS.map(opt => (
                 <option key={opt.key} value={opt.key}>
                   {opt.label} — {opt.description}
