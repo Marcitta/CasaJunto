@@ -11,6 +11,7 @@ export const TaskInspectModal: React.FC = () => {
     setActiveTaskForInspect, 
     deleteTask, 
     members, 
+    familyTasks,
     setActiveTaskForReschedule,
     currentMember,
     isDemoMode,
@@ -30,7 +31,11 @@ export const TaskInspectModal: React.FC = () => {
   const isAdmin = isDemoMode || currentMember?.role === 'ADMIN';
   const isCompleted = activeTaskForInspect.status === 'DONE' || (activeTaskForInspect.status as string) === 'COMPLETED';
   const isInProgress = activeTaskForInspect.status === 'IN_PROGRESS';
-  const assigned = members.find(m => m.id === activeTaskForInspect.assignedMemberId);
+  const isExternal = (activeTaskForInspect.executionTarget || 'HOUSEHOLD') === 'EXTERNAL_SUPPORT' ||
+    Boolean(activeTaskForInspect.familyTaskId && familyTasks?.find(ft => ft.id === activeTaskForInspect.familyTaskId)?.executionTarget === 'EXTERNAL_SUPPORT');
+  const support = isExternal ? domesticSupports.find(s => s.id === activeTaskForInspect.domesticSupportId) : undefined;
+  const supportName = support?.name || 'Apoio externo';
+  const assigned = !isExternal ? members.find(m => m.id === activeTaskForInspect.assignedMemberId) : undefined;
   const activeMembers = getActiveMembers(members);
 
   const handleAssigneeChange = async (targetId: string, confirmInProgress = false) => {
@@ -145,14 +150,24 @@ export const TaskInspectModal: React.FC = () => {
             <span className="font-bold text-text-primary">{activeTaskForInspect.roomName || 'Geral'}</span>
           </div>
 
-          {/* Atribuição de Responsável: Se ADMIN e não concluída, permite selecionar */}
-          {isCompleted ? (
+          {/* Atribuição de Responsável */}
+          {isExternal ? (
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-text-muted">
+                <User className="w-3.5 h-3.5" /> Responsável:
+              </span>
+              <div className="flex items-center gap-1.5 font-bold text-text-primary">
+                <span>🧹 {supportName}</span>
+                <span className="text-[10px] font-semibold text-text-muted">(Apoio externo)</span>
+              </div>
+            </div>
+          ) : isCompleted ? (
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-text-muted">
                 <User className="w-3.5 h-3.5" /> Responsável:
               </span>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-text-primary">{assigned?.name || 'Não atribuído'}</span>
+                <span className="font-bold text-text-primary">{assigned?.name || 'Sem responsável'}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-state-success-soft text-state-success font-semibold">
                   Concluída (Bloqueada)
                 </span>
@@ -190,7 +205,11 @@ export const TaskInspectModal: React.FC = () => {
               <span className="flex items-center gap-1.5 text-text-muted">
                 <User className="w-3.5 h-3.5" /> Responsável:
               </span>
-              <span className="font-bold text-text-primary">{assigned?.name || 'Não atribuído'}</span>
+              <span className="font-bold text-text-primary">
+                {assigned 
+                  ? `${assigned.name}${assigned.id === currentMember?.id ? ' (Você)' : ''}${assigned.role === 'ADMIN' && assigned.id !== currentMember?.id ? ' (Admin)' : ''}`
+                  : 'Sem responsável (Disponível)'}
+              </span>
             </div>
           )}
 
@@ -216,10 +235,15 @@ export const TaskInspectModal: React.FC = () => {
           )}
           <div className="flex items-center justify-between pt-1 border-t border-border-default/50">
             <span className="flex items-center gap-1.5 text-text-muted">
-              Quem normalmente faz:
+              Público de execução:
             </span>
             <span className="font-bold text-text-primary">
-              {formatExecutionTargetDisplay(activeTaskForInspect, domesticSupports).label}
+              {formatExecutionTargetDisplay(
+                isExternal && activeTaskForInspect.executionTarget !== 'EXTERNAL_SUPPORT'
+                  ? { ...activeTaskForInspect, executionTarget: 'EXTERNAL_SUPPORT' as const }
+                  : activeTaskForInspect,
+                domesticSupports
+              ).label}
             </span>
           </div>
         </div>

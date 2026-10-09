@@ -14,6 +14,7 @@ import {
   CalendarDays,
   ListChecks,
   Search,
+  Sparkles,
   X
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -377,10 +378,18 @@ export const RoutineView: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {selectedDay.tasks.map(task => {
-                  const assigned = members.find(m => m.id === task.assignedMemberId);
+                  const isExternal = (task.executionTarget || 'HOUSEHOLD') === 'EXTERNAL_SUPPORT' ||
+                    Boolean(task.familyTaskId && familyTasks.find(ft => ft.id === task.familyTaskId)?.executionTarget === 'EXTERNAL_SUPPORT');
+                  const support = isExternal ? domesticSupports.find(s => s.id === task.domesticSupportId) : undefined;
+                  const supportName = support?.name || 'Apoio externo';
+                  const assigned = !isExternal ? members.find(m => m.id === task.assignedMemberId || m.id === task.assigneeId) : undefined;
+                  const isAssignedToCaller = Boolean(currentMember && assigned && assigned.id === currentMember.id);
                   const room = rooms.find(r => r.id === task.roomId);
                   const isDone = task.status === 'DONE' || (task.status as string) === 'COMPLETED';
                   const isProgress = task.status === 'IN_PROGRESS';
+                  const effectiveTargetTask = isExternal && task.executionTarget !== 'EXTERNAL_SUPPORT'
+                    ? { ...task, executionTarget: 'EXTERNAL_SUPPORT' as const }
+                    : task;
 
                   return (
                     <div
@@ -393,8 +402,11 @@ export const RoutineView: React.FC = () => {
                           <p className="text-xs font-bold text-text-primary group-hover:text-brand-primary transition truncate">
                             {task.title}
                           </p>
-                          <span className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0">
-                            {formatExecutionTargetDisplay(task, domesticSupports).label}
+                          <span 
+                            title={isExternal ? "Público de execução: Apoio doméstico externo" : "Público de execução: Pessoas da casa"}
+                            className="px-2 py-0.5 rounded-md bg-surface-card border border-border-default text-text-secondary text-[10px] font-semibold flex items-center gap-1 shrink-0"
+                          >
+                            {formatExecutionTargetDisplay(effectiveTargetTask, domesticSupports).label}
                           </span>
                           {isDone ? (
                             <span className="px-1.5 py-0.2 rounded-md bg-state-success-soft text-state-success text-[9px] font-bold shrink-0">
@@ -411,7 +423,7 @@ export const RoutineView: React.FC = () => {
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 text-[10px] text-text-muted">
+                        <div className="flex items-center gap-2 text-[10px] text-text-muted flex-wrap">
                           {room && <span>{room.name}</span>}
                           {task.scheduledStart && (
                             <>
@@ -423,7 +435,26 @@ export const RoutineView: React.FC = () => {
                             </>
                           )}
                           <span>•</span>
-                          <span>{assigned ? assigned.name : 'Disponível'}</span>
+                          {isExternal ? (
+                            <span className="font-medium text-text-secondary">
+                              Apoio: <strong className="text-text-primary font-bold">{supportName}</strong>
+                            </span>
+                          ) : assigned ? (
+                            <span className="font-medium text-text-secondary">
+                              Resp: <strong className="text-text-primary font-bold">{assigned.name}</strong>
+                              {isAssignedToCaller && (
+                                <span className="ml-1 text-[9px] font-bold text-brand-primary">(Você)</span>
+                              )}
+                              {assigned.role === 'ADMIN' && !isAssignedToCaller && (
+                                <span className="ml-1 text-[9px] text-text-muted">(Admin)</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-state-success font-semibold flex items-center gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Sem responsável · Disponível
+                            </span>
+                          )}
                         </div>
                       </div>
 

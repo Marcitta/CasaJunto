@@ -67,6 +67,7 @@ import { runNotifications1b1Hf1Tests } from './notifications1b1Hf1.test';
 import { runNotifications1b2Tests } from './notifications1b2.test';
 import { runNotifications1b2Hf1Tests } from './notifications1b2Hf1.test';
 import { runNotifications1cHf21Tests } from './notifications1cHf21.test';
+import { runAssignmentVisualIdentityHf2Tests } from './assignmentVisualIdentityHf2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -998,6 +999,20 @@ for (const r of n1cHf21Results.results) {
   } else {
     totalFailed++;
     console.log(`[✗ FAIL] ${r.testName} - ${r.message || ''}`);
+  }
+}
+
+// 70. CASA JUNTO — HF2: IDENTIFICAÇÃO VISUAL DE ATRIBUIÇÃO (15 TESTES: AVI-01 - AVI-15)
+console.log('\n--- GRUPO 70: HF2: IDENTIFICAÇÃO VISUAL DE ATRIBUIÇÃO (AVI-01 - AVI-15) ---');
+const aviResults = runAssignmentVisualIdentityHf2Tests();
+for (const r of aviResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.actual}`);
   }
 }
 

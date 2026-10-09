@@ -101,13 +101,29 @@ export const TodayView: React.FC<TodayViewProps> = ({
   }, [isAdmin, rawPendingTasks, currentMember]);
 
   // Helpers de atribuição
+  const isTaskExternalSupport = (task: Task): boolean => {
+    const directTarget = task.executionTarget;
+    if (directTarget) {
+      return directTarget === 'EXTERNAL_SUPPORT';
+    }
+    const ft = familyTasks.find(f => f.id === task.familyTaskId || f.id === (task as any).family_task_id);
+    return (ft?.executionTarget || 'HOUSEHOLD') === 'EXTERNAL_SUPPORT';
+  };
+
   const isTaskAssignedToCaller = (task: Task): boolean => {
-    if (!currentMember) return false;
+    if (!currentMember || isTaskExternalSupport(task)) return false;
     return task.assignedMemberId === currentMember.id || task.assigneeId === currentMember.id;
   };
 
   const isTaskUnassigned = (task: Task): boolean => {
-    return Boolean(task.isUnassigned) || !task.assignedMemberId || task.assignedMemberId.trim() === '';
+    if (isTaskExternalSupport(task)) {
+      return false; // Apoio externo não é tarefa desatribuída da casa
+    }
+    const hasValidMember = Boolean(
+      (task.assignedMemberId && members.some(m => m.id === task.assignedMemberId)) ||
+      (task.assigneeId && members.some(m => m.id === task.assigneeId))
+    );
+    return Boolean(task.isUnassigned) || !hasValidMember;
   };
 
   // Contadores derivados estritamente do conjunto de hoje autorizado para o usuário
@@ -307,14 +323,21 @@ export const TodayView: React.FC<TodayViewProps> = ({
         ) : (
           <div id="today-pending-list" className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filteredPendingTasks.map(task => {
-              const assigned = members.find(m => m.id === task.assignedMemberId || m.id === task.assigneeId);
+              const isExternal = isTaskExternalSupport(task);
+              const support = isExternal ? domesticSupports.find(s => s.id === task.domesticSupportId) : undefined;
+              const supportName = support?.name || 'Apoio externo';
+              const assigned = !isExternal ? members.find(m => m.id === task.assignedMemberId || m.id === task.assigneeId) : undefined;
               const isUnassigned = isTaskUnassigned(task);
               const isAssignedToCaller = isTaskAssignedToCaller(task);
               const isAdmin = currentMember?.role === 'ADMIN';
+              const effectiveTask = isExternal && task.executionTarget !== 'EXTERNAL_SUPPORT'
+                ? { ...task, executionTarget: 'EXTERNAL_SUPPORT' as const }
+                : task;
+              const targetDisplay = formatExecutionTargetDisplay(effectiveTask, domesticSupports);
 
               // Section 10 UI Authorization:
-              // MEMBER: own task (enabled), other's task (disabled), unassigned (enabled)
-              // ADMIN: assigned task (enabled), unassigned task (enabled)
+              // MEMBER: own task (enabled), other's task (disabled), unassigned (enabled), external support (disabled)
+              // ADMIN: assigned task (enabled), unassigned task (enabled), external support (enabled)
               const canComplete = isAdmin || isAssignedToCaller || isUnassigned;
               const isChaosTask = Boolean(
                 activeChaosSession &&
@@ -345,9 +368,10 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         </span>
                         <span 
                           id={`badge-target-${task.id}`}
+                          title={isExternal ? "Público de execução: Apoio doméstico externo" : "Público de execução: Pessoas da casa"}
                           className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-surface-subtle border border-border-default text-text-secondary flex items-center gap-1"
                         >
-                          {formatExecutionTargetDisplay(task, domesticSupports).label}
+                          {targetDisplay.label}
                         </span>
                         {isChaosTask && (
                           <span
@@ -381,18 +405,22 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         id={`complete-btn-${task.id}`}
                         onClick={e => handleComplete(task, e)}
                         aria-label={
-                          isUnassigned 
-                            ? `Assumir e concluir tarefa: ${task.title}` 
-                            : isAdmin && !isAssignedToCaller 
-                              ? `Concluir como administradora: ${task.title} (atribuída a ${assigned?.name || 'outro morador'})`
-                              : `Concluir tarefa: ${task.title}`
+                          isExternal
+                            ? `Confirmar conclusão da tarefa: ${task.title} (Apoio externo: ${supportName})`
+                            : isUnassigned 
+                              ? `Assumir e concluir tarefa: ${task.title}` 
+                              : isAdmin && !isAssignedToCaller 
+                                ? `Concluir como administradora: ${task.title} (atribuída a ${assigned?.name || 'outro morador'})`
+                                : `Concluir tarefa: ${task.title}`
                         }
                         title={
-                          isUnassigned 
-                            ? 'Assumir e concluir tarefa (Iniciativa)' 
-                            : isAdmin && !isAssignedToCaller 
-                              ? `Concluir como administradora (atribuída a ${assigned?.name || 'outro morador'})`
-                              : 'Concluir tarefa'
+                          isExternal
+                            ? `Confirmar conclusão da tarefa (Apoio externo: ${supportName})`
+                            : isUnassigned 
+                              ? 'Assumir e concluir tarefa (Iniciativa)' 
+                              : isAdmin && !isAssignedToCaller 
+                                ? `Concluir como administradora (atribuída a ${assigned?.name || 'outro morador'})`
+                                : 'Concluir tarefa'
                         }
                         className={`min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl border flex items-center justify-center transition cursor-pointer shrink-0 active:scale-95 ${
                           isUnassigned
@@ -407,8 +435,16 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         id={`disabled-btn-${task.id}`}
                         disabled
                         onClick={e => e.stopPropagation()}
-                        aria-label={`Tarefa atribuída a ${assigned?.name || 'outro morador'}. Conclusão restrita.`}
-                        title={`Atribuída a ${assigned?.name || 'outro morador'}. Somente o morador responsável ou administrador pode concluir.`}
+                        aria-label={
+                          isExternal
+                            ? `Tarefa destinada ao apoio externo (${supportName}). Conclusão restrita à administradora.`
+                            : `Tarefa atribuída a ${assigned?.name || 'outro morador'}. Conclusão restrita.`
+                        }
+                        title={
+                          isExternal
+                            ? `Destinada ao apoio externo (${supportName}). Somente a administradora pode confirmar a conclusão.`
+                            : `Atribuída a ${assigned?.name || 'outro morador'}. Somente o morador responsável ou administrador pode concluir.`
+                        }
                         className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-xl border border-border-default bg-disabled-background text-disabled-text flex items-center justify-center cursor-not-allowed opacity-40 shrink-0"
                       >
                         <Check className="w-4 h-4" />
@@ -418,27 +454,60 @@ export const TodayView: React.FC<TodayViewProps> = ({
 
                   <div className="mt-3 pt-3 border-t border-border-default flex items-center justify-between text-[11px] text-text-muted">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      {isUnassigned ? (
-                        <>
+                      {isExternal ? (
+                        <div 
+                          id={`assignee-external-${task.id}`}
+                          className="flex items-center gap-1.5 min-w-0"
+                        >
+                          <div className="w-5 h-5 rounded-full bg-surface-subtle border border-border-default flex items-center justify-center text-[10px] shrink-0 text-text-secondary">
+                            🧹
+                          </div>
+                          <span className="text-[11px] font-medium text-text-secondary truncate">
+                            <span className="text-text-muted">Apoio:</span>{' '}
+                            <strong className="text-text-primary font-bold">{supportName}</strong>
+                            <span className="ml-1 text-[9px] font-normal text-text-muted">
+                              (Ajuda externa)
+                            </span>
+                          </span>
+                        </div>
+                      ) : isUnassigned ? (
+                        <div 
+                          id={`assignee-unassigned-${task.id}`}
+                          className="flex items-center gap-1.5 min-w-0"
+                        >
                           <div className="w-5 h-5 rounded-full border border-dashed border-state-success flex items-center justify-center text-state-success text-[10px] bg-state-success-soft shrink-0">
                             <Sparkles className="w-3 h-3" />
                           </div>
-                          <span className="font-semibold text-state-success truncate">
-                            Disponível (Iniciativa)
+                          <span className="text-[11px] font-semibold text-state-success truncate">
+                            Sem responsável · <span className="font-normal text-text-muted">Disponível (Iniciativa)</span>
                           </span>
-                        </>
+                        </div>
                       ) : (
-                        <>
+                        <div 
+                          id={`assignee-member-${task.id}`}
+                          className="flex items-center gap-1.5 min-w-0"
+                        >
                           <div 
                             className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0"
                             style={{ backgroundColor: `${assigned?.color || '#5b32a3'}20`, color: assigned?.color || '#5b32a3' }}
                           >
                             {assigned?.avatar || '👤'}
                           </div>
-                          <span className="font-semibold text-text-secondary truncate">
-                            {assigned?.name || 'Não atribuído'}
+                          <span className="text-[11px] font-medium text-text-secondary truncate">
+                            <span className="text-text-muted">Resp:</span>{' '}
+                            <strong className="text-text-primary font-bold">{assigned?.name}</strong>
+                            {isAssignedToCaller && (
+                              <span className="ml-1 text-[10px] font-bold px-1.5 py-0.2 rounded bg-brand-primary-soft text-brand-primary">
+                                Você
+                              </span>
+                            )}
+                            {assigned?.role === 'ADMIN' && !isAssignedToCaller && (
+                              <span className="ml-1 text-[9px] font-semibold text-text-muted">
+                                (Admin)
+                              </span>
+                            )}
                           </span>
-                        </>
+                        </div>
                       )}
                     </div>
 
@@ -515,19 +584,38 @@ export const TodayView: React.FC<TodayViewProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] text-text-muted flex items-center gap-1.5 flex-wrap mt-0.5">
-                        {isIntervention ? (
-                          <span className="text-state-warning font-medium">
-                            Atribuída a {assigned?.name || 'Morador'} • Concluída pela administradora {completedName}
-                          </span>
-                        ) : task.completionType === 'SELF_CLAIMED' ? (
-                          <span className="text-state-success font-medium">
-                            Assumida e concluída por {completedName} (Iniciativa)
-                          </span>
-                        ) : (
-                          <span>
-                            Feito por {completedName || assigned?.name || 'Alguém'}
-                          </span>
-                        )}
+                        {(() => {
+                          const isExt = isTaskExternalSupport(task);
+                          const sup = isExt ? domesticSupports.find(s => s.id === task.domesticSupportId) : undefined;
+                          const sName = sup?.name || 'Apoio externo';
+
+                          if (isExt) {
+                            return (
+                              <span className="text-text-muted font-medium">
+                                Apoio externo: {sName} • Concluída por {completedName}
+                              </span>
+                            );
+                          }
+                          if (isIntervention) {
+                            return (
+                              <span className="text-state-warning font-medium">
+                                Atribuída a {assigned?.name || 'Morador'} • Concluída pela administradora {completedName}
+                              </span>
+                            );
+                          }
+                          if (task.completionType === 'SELF_CLAIMED') {
+                            return (
+                              <span className="text-state-success font-medium">
+                                Assumida e concluída por {completedName} (Iniciativa)
+                              </span>
+                            );
+                          }
+                          return (
+                            <span>
+                              Feito por {completedName || assigned?.name || 'Alguém'}
+                            </span>
+                          );
+                        })()}
                         <span>•</span>
                         <span className="text-brand-accent font-semibold">+{task.effort || 10} pts</span>
                       </div>
