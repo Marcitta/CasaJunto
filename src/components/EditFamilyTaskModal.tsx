@@ -169,6 +169,25 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
       return;
     }
 
+    // FASE B.5.1: Impedir edição de uma rotina para um ambiente onde já exista a mesma tarefa ativa
+    const currentRoomId = routine?.room_id || routine?.roomId;
+    if (selectedRoomId && selectedRoomId !== currentRoomId) {
+      const targetTmId = routine?.task_master_id || routine?.taskMasterId || (routine as any)?.task_id || master?.id;
+      if (targetTmId) {
+        const collision = familyTasks.find(ft => {
+          if (ft.id === routine?.id) return false;
+          if (ft.active === false) return false;
+          const ftTmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId;
+          const ftRoomId = ft.room_id || ft.roomId;
+          return ftTmId === targetTmId && ftRoomId === selectedRoomId;
+        });
+        if (collision) {
+          setError('Já existe uma rotina ativa desta tarefa no ambiente selecionado.');
+          return;
+        }
+      }
+    }
+
     const trimmedTitle = customTitle.trim();
     const trimmedDescription = customDescription.trim();
 

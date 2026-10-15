@@ -123,6 +123,56 @@ export class RoutineContinuityService {
   }
 
   /**
+   * FASE B.5.1: Avalia de forma segura se um TaskAssignment pertence a uma rotina específica (FamilyTask),
+   * isolando rotinas de cômodos diferentes que compartilham o mesmo task_master_id.
+   * Evita associação ambígua com registros legados desprovidos de family_task_id.
+   */
+  public static isAssignmentMatchingRoutine(
+    asg: { id: string; family_task_id?: string; task_id?: string; room_id?: string; [key: string]: any },
+    routine: FamilyTask,
+    existingRoutines: FamilyTask[]
+  ): boolean {
+    const routineId = routine.id;
+    const routineRoomId = routine.room_id || routine.roomId;
+    const targetTmId = routine.task_master_id || (routine as any).taskMasterId || (routine as any).task_id;
+
+    const asgFtId = asg.family_task_id || asg.familyTaskId;
+    const asgTmId = asg.task_id || asg.taskMasterId;
+    const asgRoomId = asg.room_id || asg.roomId;
+
+    // 1. Identificação canônica primária por ID exato de FamilyTask
+    if (asgFtId === routineId || asg.id.startsWith(`${routineId}_`)) {
+      return true;
+    }
+
+    // 2. Se a ocorrência já possui vínculo com OUTRA FamilyTask explícita, NÃO pertence a esta
+    if (asgFtId && asgFtId !== routineId) {
+      return false;
+    }
+
+    // 3. Fallback legado (somente para ocorrências legadas sem family_task_id)
+    if (!asgFtId && targetTmId && asgTmId === targetTmId) {
+      // Se a ocorrência legada possui room_id informado:
+      if (asgRoomId && routineRoomId) {
+        return asgRoomId === routineRoomId;
+      }
+
+      // Se a ocorrência legada NÃO possui room_id:
+      // Verifica se existem múltiplas rotinas da família apontando para o mesmo task_master_id
+      const routinesWithSameTm = existingRoutines.filter(r => {
+        const rTm = r.task_master_id || (r as any).taskMasterId || (r as any).task_id;
+        return rTm && rTm === targetTmId;
+      });
+
+      // Só associa se esta for a ÚNICA rotina existente com esse task_master_id.
+      // Se houver mais de uma rotina com o mesmo task_master_id, a associação é ambígua e NÃO é assumida.
+      return routinesWithSameTm.length === 1 && routinesWithSameTm[0].id === routineId;
+    }
+
+    return false;
+  }
+
+  /**
    * PH-2/PH-3 RECONCILIAÇÃO CANÔNICA (HOTFIX-TASK-CREATE-1-R2D):
    * GENERATION HORIZON: Today + next 14 days = 15 dias.
    * 
@@ -216,10 +266,19 @@ export class RoutineContinuityService {
         const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate || '';
         const tmId = asg.task_id || (asg as any).taskMasterId;
 
+        const asgRoomId = asg.room_id || (asg as any).roomId;
+
         // Se a atribuição está explicitamente vinculada a uma rotina ativa, ela NÃO é inativa
         const isLinkedToActiveRoutine = ftId && activeRoutineIds.has(ftId);
 
-        const isInactive = !isLinkedToActiveRoutine && (
+        // Se a atribuição é legada (sem ftId), mas possui room_id vinculado a uma rotina ativa com o mesmo tmId, ela NÃO é inativa
+        const isLinkedToActiveRoom = !ftId && tmId && asgRoomId && activeRoutinesList.some(r => {
+          const rTm = r.task_master_id || (r as any).taskMasterId || (r as any).task_id;
+          const rRoom = r.room_id || r.roomId;
+          return rTm === tmId && rRoom === asgRoomId;
+        });
+
+        const isInactive = !isLinkedToActiveRoutine && !isLinkedToActiveRoom && (
           (ftId && inactiveRoutineIds.has(ftId)) ||
           Array.from(inactiveRoutineIds).some(rId => asg.id.startsWith(`${rId}_`)) ||
           (!ftId && tmId && inactiveTaskMasterIds.has(tmId))
@@ -565,6 +624,7 @@ export class RoutineContinuityService {
     familyId: string;
     routine: FamilyTask;
     existingAssignments: TaskAssignment[];
+    existingRoutines?: FamilyTask[];
     isDemoMode?: boolean;
     timezone?: string;
   }): Promise<{
@@ -576,9 +636,30 @@ export class RoutineContinuityService {
       familyId,
       routine,
       existingAssignments,
+      existingRoutines,
       isDemoMode = false,
       timezone = DEFAULT_TIMEZONE
     } = params;
+
+    // FASE B.5.1: Proteção idempotente contra criação concorrente no mesmo ambiente
+    const targetTmId = routine.task_master_id || (routine as any).taskMasterId || (routine as any).task_id;
+    const targetRoomId = routine.room_id || routine.roomId;
+    if (existingRoutines && targetTmId && targetRoomId) {
+      const activeCollision = existingRoutines.find(r => {
+        if (r.id === routine.id) return false;
+        if (r.active === false) return false;
+        const rTm = r.task_master_id || (r as any).taskMasterId || (r as any).task_id;
+        const rRoom = r.room_id || r.roomId;
+        return rTm === targetTmId && rRoom === targetRoomId;
+      });
+      if (activeCollision) {
+        return {
+          createdRoutine: activeCollision,
+          newAssignments: [],
+          allAssignments: existingAssignments
+        };
+      }
+    }
 
     const today = getFamilyLocalDate(timezone);
     const horizonDates = getRollingDateHorizon(today, 15);
@@ -659,6 +740,24 @@ export class RoutineContinuityService {
       throw new Error(`Rotina com ID ${routineId} não encontrada.`);
     }
 
+    const newRoomId = updates.room_id || updates.roomId;
+    const currentRoomId = routine.room_id || routine.roomId;
+    const targetTmId = updates.task_master_id || (updates as any).taskMasterId || routine.task_master_id || (routine as any).taskMasterId || routine.task_id;
+
+    // FASE B.5.1: Impedir edição de uma rotina para um ambiente onde já exista a mesma tarefa ativa
+    if (newRoomId && newRoomId !== currentRoomId && targetTmId) {
+      const activeCollision = existingRoutines.find(r => {
+        if (r.id === routineId) return false;
+        if (r.active === false) return false;
+        const rTm = r.task_master_id || (r as any).taskMasterId || (r as any).task_id;
+        const rRoom = r.room_id || r.roomId;
+        return rTm === targetTmId && rRoom === newRoomId;
+      });
+      if (activeCollision) {
+        throw new Error('Já existe uma rotina ativa desta tarefa no ambiente selecionado.');
+      }
+    }
+
     const updatedRoutine: FamilyTask = {
       ...routine,
       ...updates,
@@ -676,14 +775,10 @@ export class RoutineContinuityService {
       assignmentMap.set(asg.id, { ...asg });
     }
 
-    const targetTmId = updatedRoutine.task_master_id || (updatedRoutine as any).taskMasterId || (updatedRoutine as any).task_id;
-
     for (const asg of existingAssignments) {
-      const asgFtId = asg.family_task_id || (asg as any).familyTaskId;
       const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate || '';
-      const asgTmId = asg.task_id || (asg as any).taskMasterId;
 
-      const isMatch = asgFtId === routineId || asg.id.startsWith(`${routineId}_`) || (!asgFtId && targetTmId && asgTmId === targetTmId);
+      const isMatch = RoutineContinuityService.isAssignmentMatchingRoutine(asg, routine, existingRoutines);
 
       // Afeta apenas ocorrências desta rotina a partir de hoje
       if (isMatch && asgDate >= today) {
@@ -830,14 +925,9 @@ export class RoutineContinuityService {
     const cancelledAssignments: TaskAssignment[] = [];
 
     for (const asg of existingAssignments) {
-      const asgFtId = asg.family_task_id || (asg as any).familyTaskId;
       const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate;
-      const asgTmId = asg.task_id || (asg as any).taskMasterId;
 
-      const matches = 
-        asgFtId === routineId || 
-        asg.id.startsWith(`${routineId}_`) ||
-        (!asgFtId && targetTmId && asgTmId === targetTmId);
+      const matches = RoutineContinuityService.isAssignmentMatchingRoutine(asg, routine, existingRoutines);
 
       if (matches && asgDate && asgDate >= today) {
         // COMPLETED e IN_PROGRESS são estritamente preservados
@@ -864,15 +954,13 @@ export class RoutineContinuityService {
         const snap = await getDocs(asgColRef);
         snap.forEach(d => {
           const data = d.data();
-          const docFtId = data.family_task_id || data.familyTaskId;
           const docDate = data.scheduled_date || data.scheduledDate || data.dueDate;
-          const docTmId = data.task_id || data.taskMasterId;
           const docStatus = data.status;
 
-          const matches = docFtId === routineId || d.id.startsWith(`${routineId}_`) || (targetTmId && docTmId === targetTmId);
+          const asgObj = FirestoreMappers.toTaskAssignment(d.id, data);
+          const matches = RoutineContinuityService.isAssignmentMatchingRoutine(asgObj, routine, existingRoutines);
           if (matches && docDate && docDate >= today) {
             if (docStatus !== 'COMPLETED' && docStatus !== 'DONE' && docStatus !== 'IN_PROGRESS' && docStatus !== 'CANCELLED') {
-              const asgObj = FirestoreMappers.toTaskAssignment(d.id, data);
               asgObj.status = 'CANCELLED';
               asgObj.family_task_id = routineId;
               if (!cancelledAssignments.some(a => a.id === d.id)) {
@@ -951,14 +1039,9 @@ export class RoutineContinuityService {
 
     // 1. Restaura ocorrências CANCELLED de hoje em diante que sejam válidas no cronograma atual
     for (const asg of existingAssignments) {
-      const asgFtId = asg.family_task_id || (asg as any).familyTaskId;
       const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate;
-      const asgTmId = asg.task_id || (asg as any).taskMasterId;
 
-      const matches = 
-        asgFtId === routineId || 
-        asg.id.startsWith(`${routineId}_`) ||
-        (!asgFtId && targetTmId && asgTmId === targetTmId);
+      const matches = RoutineContinuityService.isAssignmentMatchingRoutine(asg, routine, existingRoutines);
 
       if (matches && asgDate && asgDate >= today && asg.status === 'CANCELLED') {
         if (RoutineGenerator.shouldOccurOnDate(reactivatedRoutine, asgDate)) {

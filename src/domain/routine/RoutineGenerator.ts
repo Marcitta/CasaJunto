@@ -147,9 +147,14 @@ export class RoutineGenerator {
         existingDateRoutineSet.add(`${ftId}_${asgDate}`);
       }
       const occTmId = occ.task_id || (occ as any).taskMasterId;
+      const occRoomId = occ.room_id || (occ as any).roomId;
       // Fallback legado: só registra se o assignment não possuir vínculo canônico com FamilyTask
       if (!ftId && occTmId && asgDate) {
-        existingLegacyTmDateSet.add(`${occTmId}_${asgDate}`);
+        if (occRoomId) {
+          existingLegacyTmDateSet.add(`${occTmId}_${occRoomId}_${asgDate}`);
+        } else {
+          existingLegacyTmDateSet.add(`${occTmId}_${asgDate}`);
+        }
       }
     }
 
@@ -163,19 +168,30 @@ export class RoutineGenerator {
       const occurrenceId = this.getDeterministicOccurrenceId(routine.id, dateStr);
       const routineDateKey = `${routine.id}_${dateStr}`;
       const tmId = routine.task_master_id || (routine as any).taskMasterId || (routine as any).task_id || (routine as any).taskId;
+      const routineRoomId = routine.room_id || routine.roomId;
+      const tmRoomDateKey = tmId && routineRoomId ? `${tmId}_${routineRoomId}_${dateStr}` : '';
       const tmDateKey = tmId ? `${tmId}_${dateStr}` : '';
 
       // Verificação primária canônica: ID determinístico ou {familyTaskId}_{scheduledDate}
       const isAlreadyExisting = existingMap.has(occurrenceId) || existingDateRoutineSet.has(routineDateKey);
 
-      // Fallback legado baseado em task_id: só bloqueia se houver assignment legado sem family_task_id
-      // que possua exatamente o mesmo task_id na mesma data, nunca eliminando ocorrência canônica de outra FamilyTask
-      const isLegacyBlocked = !isAlreadyExisting && tmDateKey ? existingLegacyTmDateSet.has(tmDateKey) : false;
+      // Fallback legado baseado em task_id:
+      // Se a ocorrência legada tinha room_id, só bloqueia se o cômodo coincidir.
+      // Se não tinha room_id, bloqueia como salvaguarda daquela data.
+      let matchedLegacyKey: string | null = null;
+      if (!isAlreadyExisting) {
+        if (tmRoomDateKey && existingLegacyTmDateSet.has(tmRoomDateKey)) {
+          matchedLegacyKey = tmRoomDateKey;
+        } else if (tmDateKey && existingLegacyTmDateSet.has(tmDateKey)) {
+          matchedLegacyKey = tmDateKey;
+        }
+      }
+      const isLegacyBlocked = matchedLegacyKey !== null;
 
       if (isAlreadyExisting || isLegacyBlocked) {
         // Se bloqueado pelo fallback legado, consumimos para não bloquear outras FamilyTasks com mesmo task_master_id
-        if (isLegacyBlocked && tmDateKey) {
-          existingLegacyTmDateSet.delete(tmDateKey);
+        if (matchedLegacyKey) {
+          existingLegacyTmDateSet.delete(matchedLegacyKey);
         }
         // Documento já existe: REGRA CANÔNICA -> JAMAIS SOBRESCREVER OU DUPLICAR
         continue;

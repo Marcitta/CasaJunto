@@ -71,6 +71,7 @@ import { runAssignmentVisualIdentityHf2Tests } from './assignmentVisualIdentityH
 import { runFrequencyPhaseATestSuite } from './frequencyHydrationPhaseA.test';
 import { runRoomPresetPhaseBTestSuite } from './roomPresetPhaseB.test';
 import { runUnifiedAddRoomFlowTestSuite } from './unifiedAddRoomFlow.test';
+import { runMultiRoomPhaseB51TestSuite } from './routineMultiRoomPhaseB51.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1051,6 +1052,20 @@ for (const r of presetResults) {
 console.log('\n--- GRUPO 73: FASE B: UNIFICAÇÃO DO FLUXO DE ADICIONAR AMBIENTE (UFA-01 - UFA-15) ---');
 const ufaResults = runUnifiedAddRoomFlowTestSuite();
 for (const r of ufaResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 74. CASA JUNTO — FASE B.5.1: UNICIDADE POR AMBIENTE E INTEGRIDADE DAS ROTINAS (15 TESTES: MR01 - MR15)
+console.log('\n--- GRUPO 74: FASE B.5.1: UNICIDADE POR AMBIENTE E INTEGRIDADE DAS ROTINAS (MR01 - MR15) ---');
+const mrResults = await runMultiRoomPhaseB51TestSuite();
+for (const r of mrResults) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

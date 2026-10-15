@@ -150,6 +150,7 @@ export interface Room {
   taskCount?: number;
   house_id?: string;
   family_id?: string;
+  familyId?: string;
   active?: boolean;
   createdAt?: string;
   updatedAt?: string;

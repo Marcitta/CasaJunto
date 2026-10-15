@@ -195,7 +195,7 @@ export function mapAssignmentsToTasks(params: {
     const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
     const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
 
-    // HOTFIX-DUP-1 / DS1C-HF5: Proteção canônica de hidratação no AppContext (sem dedupe por título)
+    // HOTFIX-DUP-1 / DS1C-HF5 / FASE-B.5.1: Proteção canônica de hidratação no AppContext (sem dedupe por título)
     // A identidade canônica primária da ocorrência recorrente é: {familyTaskId}_{scheduledDate}
     // Duas FamilyTasks distintas com o mesmo TaskMaster na mesma data são ocorrências independentes e ambas sobrevivem.
     const canonicalFtId = asg.family_task_id || (asg as any).familyTaskId;
@@ -203,7 +203,7 @@ export function mapAssignmentsToTasks(params: {
     const canonicalKey = (canonicalFtId && canonicalDate)
       ? `${canonicalFtId}_${canonicalDate}`
       : (asg.task_id && canonicalDate)
-        ? `${asg.task_id}_${canonicalDate}`
+        ? `${asg.task_id}_${asg.room_id || 'geral'}_${canonicalDate}`
         : asg.id;
     
     if (seenCanonicalKeys.has(canonicalKey)) {
@@ -2021,11 +2021,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const now = new Date().toISOString();
     const familyId = authFamily?.id || family.id || 'fam-demo';
     const targetTmId = data.task_master_id || data.taskMasterId || data.task_id || data.taskId;
+    const targetRoomId = data.room_id || data.roomId || 'geral';
 
-    // HOTFIX-DUP-1: Invariante canônica: única rotina por task_master_id
+    // FASE B.5.1: Unicidade canônica por (task_master_id, room_id).
+    // Permite a mesma tarefa em cômodos diferentes, mas impede duplicidade ativa no mesmo cômodo.
     const existingIndex = familyTasks.findIndex(ft => {
       const ftTmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId;
-      return targetTmId && ftTmId === targetTmId;
+      const ftRoomId = ft.room_id || ft.roomId || 'geral';
+      return targetTmId && ftTmId === targetTmId && ftRoomId === targetRoomId;
     });
 
     const isDemo = isDemoMode || !authFamily;
@@ -2117,6 +2120,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       familyId,
       routine: newRoutine,
       existingAssignments: existingOccs,
+      existingRoutines: familyTasks,
       isDemoMode: isDemo,
       timezone: family.timezone
     });
@@ -2225,14 +2229,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setFamilyTasks(prev => prev.map(r => r.id === routineId ? result.deactivatedRoutine : r));
     const cancelledMap = new Map(result.cancelledAssignments.map(a => [a.id, a]));
     const targetTmId = result.deactivatedRoutine.task_master_id || (result.deactivatedRoutine as any).taskMasterId;
+    const routineRoomId = result.deactivatedRoutine.room_id || result.deactivatedRoutine.roomId;
     const today = getFamilyLocalDate(family.timezone);
+
+    const routinesWithSameTm = familyTasks.filter(r => {
+      const rTm = r.task_master_id || (r as any).taskMasterId || (r as any).task_id;
+      return rTm && rTm === targetTmId;
+    });
 
     setTasks(prev => prev.map(t => {
       const isMatch = 
         cancelledMap.has(t.id) ||
         t.familyTaskId === routineId ||
         (t.id && t.id.startsWith(`${routineId}_`)) ||
-        (targetTmId && t.taskMasterId === targetTmId);
+        (!t.familyTaskId && targetTmId && t.taskMasterId === targetTmId && (
+          t.roomId ? t.roomId === routineRoomId : routinesWithSameTm.length === 1
+        ));
 
       const tDate = t.dueDate || t.scheduledDate || '';
       if (isMatch && tDate >= today) {
@@ -2311,11 +2323,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     for (const item of items) {
       try {
+        const targetRoomId = item.roomId || 'geral';
         const existingIndex = currentRoutines.findIndex(
-          ft => (
-            (item.taskMasterId && (ft.task_master_id === item.taskMasterId || ft.taskMasterId === item.taskMasterId || ft.task_id === item.taskMasterId || ft.taskId === item.taskMasterId)) ||
-            ft.id === item.taskMasterId
-          )
+          ft => {
+            const ftTmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId;
+            const ftRoomId = ft.room_id || ft.roomId || 'geral';
+            const matchesTm = (item.taskMasterId && (ftTmId === item.taskMasterId)) || ft.id === item.taskMasterId;
+            return matchesTm && ftRoomId === targetRoomId;
+          }
         );
 
         if (existingIndex >= 0) {

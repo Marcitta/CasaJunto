@@ -56,11 +56,24 @@ export class RebalanceService {
     }
 
     const rebalanceFamilyTasks: FamilyTask[] = pendingAssignments.map((a, idx) => {
-      const existingFt = ctx.familyTasks.find(ft => ft.id === a.family_task_id || ft.task_master_id === a.task_id);
+      // Prioridade 1: Match canônico estrito por family_task_id
+      let existingFt = ctx.familyTasks.find(ft => ft.id === a.family_task_id);
+
+      // Fallback legado defensivo (apenas se family_task_id for ausente)
+      if (!existingFt && a.task_id) {
+        const candidateFts = ctx.familyTasks.filter(ft => ft.task_master_id === a.task_id);
+        if (a.room_id) {
+          existingFt = candidateFts.find(ft => (ft.room_id || (ft as any).roomId) === a.room_id);
+        } else if (candidateFts.length === 1) {
+          existingFt = candidateFts[0];
+        }
+      }
+
       return {
         id: a.id, // Preserva identidade exata da ocorrência
         family_id: a.family_id || ctx.users[0]?.family_id || 'fam-1',
         task_master_id: a.task_id,
+        room_id: a.room_id || existingFt?.room_id || (existingFt as any)?.roomId,
         frequency: existingFt?.frequency || 'daily',
         preferred_days: existingFt?.preferred_days || [ctx.dayOfWeek],
         preferred_time: a.scheduled_start || existingFt?.preferred_time,
@@ -82,9 +95,19 @@ export class RebalanceService {
     const usedPendingIds = new Set<string>();
 
     for (const rawAsg of rawNewAssignments) {
-      const matched = pendingAssignments.find(
-        p => !usedPendingIds.has(p.id) && (p.id === rawAsg.family_task_id || p.task_id === rawAsg.task_id)
+      // Prioridade 1: match exato por id da ocorrência (pois rebalanceFamilyTasks.id = a.id)
+      let matched = pendingAssignments.find(
+        p => !usedPendingIds.has(p.id) && p.id === rawAsg.family_task_id
       );
+
+      // Fallback legado room-aware (apenas se não encontrou por ID)
+      if (!matched) {
+        matched = pendingAssignments.find(
+          p => !usedPendingIds.has(p.id) && p.task_id === rawAsg.task_id && (
+            (p.room_id && rawAsg.room_id) ? p.room_id === rawAsg.room_id : true
+          )
+        );
+      }
 
       if (matched) {
         usedPendingIds.add(matched.id);
