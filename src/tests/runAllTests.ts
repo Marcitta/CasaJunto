@@ -72,6 +72,7 @@ import { runFrequencyPhaseATestSuite } from './frequencyHydrationPhaseA.test';
 import { runRoomPresetPhaseBTestSuite } from './roomPresetPhaseB.test';
 import { runUnifiedAddRoomFlowTestSuite } from './unifiedAddRoomFlow.test';
 import { runMultiRoomPhaseB51TestSuite } from './routineMultiRoomPhaseB51.test';
+import { runTaskCatalogMultiRoomPhaseB52TestSuite } from './taskCatalogMultiRoomPhaseB52.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1066,6 +1067,20 @@ for (const r of ufaResults) {
 console.log('\n--- GRUPO 74: FASE B.5.1: UNICIDADE POR AMBIENTE E INTEGRIDADE DAS ROTINAS (MR01 - MR15) ---');
 const mrResults = await runMultiRoomPhaseB51TestSuite();
 for (const r of mrResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 75. CASA JUNTO — FASE B.5.2: CATÁLOGO MULTIAMBIENTE (16 TESTES: CMR-01 - CMR-16)
+console.log('\n--- GRUPO 75: FASE B.5.2: CATÁLOGO MULTIAMBIENTE (CMR-01 - CMR-16) ---');
+const cmrResults = runTaskCatalogMultiRoomPhaseB52TestSuite();
+for (const r of cmrResults) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

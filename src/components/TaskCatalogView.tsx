@@ -19,10 +19,11 @@ import {
 import { allMasterTasks, taskCategoryLabels, roomTypeLabels } from '../data/tasks';
 import { useApp } from '../context/AppContext';
 import { AuthContext } from '../context/AuthContext';
-import { TaskMaster, FamilyTask, BatchAddRoutineInput } from '../types';
+import { TaskMaster, FamilyTask, Room, BatchAddRoutineInput } from '../types';
 import { BatchConfigurationModal } from './BatchConfigurationModal';
 import { BatchRemoveModal } from './BatchRemoveModal';
 import { EditFamilyTaskModal } from './EditFamilyTaskModal';
+import { AddRoutineToRoomModal } from './AddRoutineToRoomModal';
 import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
 
 export const TaskCatalogView: React.FC = () => {
@@ -54,6 +55,7 @@ export const TaskCatalogView: React.FC = () => {
 
   // Dropdown menu state for active card actions
   const [openMenuTaskId, setOpenMenuTaskId] = useState<string | null>(null);
+  const [openEditMenuTaskId, setOpenEditMenuTaskId] = useState<string | null>(null);
 
   // Modal State
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
@@ -62,11 +64,15 @@ export const TaskCatalogView: React.FC = () => {
   const [tasksForRemove, setTasksForRemove] = useState<Array<{ taskMaster: TaskMaster; familyTask: FamilyTask }>>([]);
   const [editingFamilyTaskId, setEditingFamilyTaskId] = useState<string | null>(null);
 
+  // Multiambiente Modal State (Fase B.5.2)
+  const [isAddRoomModalOpen, setIsAddRoomModalOpen] = useState(false);
+  const [taskForAddRoom, setTaskForAddRoom] = useState<TaskMaster | null>(null);
+
   // Submitting / Loading State
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // User Feedback Toast / Alert
-  const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // RBAC: Check if current caller is ADMIN
   const isAdmin = currentMember 
@@ -102,34 +108,70 @@ export const TaskCatalogView: React.FC = () => {
     return [...allMasterTasks, ...customCatalogItems];
   }, [customCatalogItems]);
 
+  // Map TaskMaster ID to list of active FamilyTasks (Multiambiente B.5.2)
+  const activeRoutinesByTask = useMemo(() => {
+    const map = new Map<string, FamilyTask[]>();
+    familyTasks.forEach(ft => {
+      if (ft.active === false) return;
+      const tmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId || ft.id;
+      if (tmId) {
+        const list = map.get(tmId) || [];
+        list.push(ft);
+        map.set(tmId, list);
+      }
+    });
+    return map;
+  }, [familyTasks]);
+
+  // Map TaskMaster ID to list of inactive FamilyTasks
+  const inactiveRoutinesByTask = useMemo(() => {
+    const map = new Map<string, FamilyTask[]>();
+    familyTasks.forEach(ft => {
+      if (ft.active !== false) return;
+      const tmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId || ft.id;
+      if (tmId) {
+        const list = map.get(tmId) || [];
+        list.push(ft);
+        map.set(tmId, list);
+      }
+    });
+    return map;
+  }, [familyTasks]);
+
   // Map TaskMaster ID or Custom FamilyTask ID to active/inactive FamilyTask
   const familyTaskMap = useMemo(() => {
     const map = new Map<string, FamilyTask>();
     familyTasks.forEach(ft => {
       const tmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId;
       if (tmId) {
-        map.set(tmId, ft);
+        if (!map.has(tmId) || ft.active !== false) {
+          map.set(tmId, ft);
+        }
       }
-      map.set(ft.id, ft);
+      if (!map.has(ft.id) || ft.active !== false) {
+        map.set(ft.id, ft);
+      }
     });
     return map;
   }, [familyTasks]);
 
   // Compute status for a task master or custom family task
   const getTaskStatus = (taskId: string): 'AVAILABLE' | 'ACTIVE' | 'INACTIVE' => {
-    const ft = familyTaskMap.get(taskId);
-    if (!ft) return 'AVAILABLE';
-    return ft.active !== false ? 'ACTIVE' : 'INACTIVE';
+    const activeList = activeRoutinesByTask.get(taskId);
+    if (activeList && activeList.length > 0) return 'ACTIVE';
+    const inactiveList = inactiveRoutinesByTask.get(taskId);
+    if (inactiveList && inactiveList.length > 0) return 'INACTIVE';
+    return 'AVAILABLE';
   };
 
   // Real Counts for Quick Navigation Chips
   const totalCount = allCatalogTasks.length;
   const activeCount = useMemo(() => {
     return allCatalogTasks.filter(t => getTaskStatus(t.id) === 'ACTIVE').length;
-  }, [allCatalogTasks, familyTaskMap]);
+  }, [allCatalogTasks, activeRoutinesByTask]);
   const availableCount = useMemo(() => {
     return allCatalogTasks.filter(t => getTaskStatus(t.id) !== 'ACTIVE').length;
-  }, [allCatalogTasks, familyTaskMap]);
+  }, [allCatalogTasks, activeRoutinesByTask]);
 
   // Filter tasks based on search, category, room_type, and status
   const visibleTasks = useMemo(() => {
@@ -245,11 +287,51 @@ export const TaskCatalogView: React.FC = () => {
     setIsRemoveModalOpen(true);
   };
 
-  // Open single task configure
+  // Open single task configure (Fase B.5.2: utiliza AddRoutineToRoomModal)
   const handleOpenSingleConfig = (task: TaskMaster) => {
     if (!isAdmin) return;
-    setTasksForConfig([task]);
-    setIsConfigModalOpen(true);
+    setTaskForAddRoom(task);
+    setIsAddRoomModalOpen(true);
+  };
+
+  // Open add routine to another room modal (Fase B.5.2)
+  const handleOpenAddAnotherRoom = (task: TaskMaster) => {
+    if (!isAdmin) return;
+    setTaskForAddRoom(task);
+    setIsAddRoomModalOpen(true);
+  };
+
+  // Confirm single routine add or reactivation
+  const handleConfirmSingleAddRoutine = async (config: BatchAddRoutineInput) => {
+    setIsSubmitting(true);
+    try {
+      const result = await batchAddRoutines([config]);
+      const roomName = rooms.find(r => r.id === config.roomId)?.name || 'ambiente';
+      if (result.reactivated > 0) {
+        setFeedbackMessage({
+          type: 'success',
+          text: `Rotina de "${config.name}" reativada com sucesso no ambiente "${roomName}".`
+        });
+      } else if (result.added > 0) {
+        setFeedbackMessage({
+          type: 'success',
+          text: `Rotina de "${config.name}" adicionada com sucesso ao ambiente "${roomName}".`
+        });
+      } else if (result.skipped > 0) {
+        setFeedbackMessage({
+          type: 'info',
+          text: `A rotina de "${config.name}" já estava ativa no ambiente "${roomName}".`
+        });
+      }
+    } catch (err: any) {
+      setFeedbackMessage({
+        type: 'error',
+        text: `Erro ao adicionar rotina: ${err?.message || 'Falha desconhecida.'}`
+      });
+      throw err;
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Open single task remove
@@ -667,6 +749,10 @@ export const TaskCatalogView: React.FC = () => {
           {visibleTasks.map(task => {
             const isSelected = selectedTaskIds.has(task.id);
             const status = getTaskStatus(task.id);
+            const activeRoutines = activeRoutinesByTask.get(task.id) || [];
+            const activeRoomsForTask = activeRoutines
+              .map(ft => rooms.find(r => r.id === (ft.room_id || ft.roomId)))
+              .filter(Boolean) as Room[];
             const catInfo = taskCategoryLabels[task.category] || { label: task.category, icon: '📋', color: '#5b32a3', bg: '#f5f0ff' };
             const roomLabel = task.room_type ? (roomTypeLabels[task.room_type] || task.room_type) : 'Geral';
             const effortPts = task.effort_level ? task.effort_level * 5 : 10;
@@ -721,10 +807,19 @@ export const TaskCatalogView: React.FC = () => {
                         </span>
                       )}
 
-                      {status === 'ACTIVE' ? (
+                      {/* Requisito 3: Apresentação compatível com múltiplos ambientes */}
+                      {activeRoomsForTask.length > 1 ? (
                         <span
                           id={`task-status-${task.id}`}
-                          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-state-success-soft text-state-success"
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-state-success-soft text-state-success"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>{activeRoomsForTask.length} ambientes</span>
+                        </span>
+                      ) : activeRoomsForTask.length === 1 ? (
+                        <span
+                          id={`task-status-${task.id}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-state-success-soft text-state-success"
                         >
                           <Check className="w-3 h-3" />
                           <span>Na casa</span>
@@ -732,12 +827,19 @@ export const TaskCatalogView: React.FC = () => {
                       ) : status === 'INACTIVE' ? (
                         <span
                           id={`task-status-${task.id}`}
-                          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-state-warning-soft text-state-warning"
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-state-warning-soft text-state-warning"
                         >
                           <Pause className="w-3 h-3" />
                           <span>Pausada</span>
                         </span>
-                      ) : null}
+                      ) : (
+                        <span
+                          id={`task-status-${task.id}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-surface-subtle text-text-muted border border-border-default/60"
+                        >
+                          <span>Disponível</span>
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -757,6 +859,19 @@ export const TaskCatalogView: React.FC = () => {
                     <span>•</span>
                     <span className="truncate">{catInfo.label}</span>
                   </div>
+
+                  {/* Requisitos 1 e 2: Identificar ambientes ativos e exibir "Ativa em: [nomes]" */}
+                  {activeRoomsForTask.length > 0 && (
+                    <div 
+                      id={`task-active-rooms-${task.id}`}
+                      className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-brand-primary"
+                    >
+                      <Check className="w-3.5 h-3.5 text-state-success shrink-0" />
+                      <span className="truncate">
+                        Ativa em: {activeRoomsForTask.map(r => r.name).join(', ')}
+                      </span>
+                    </div>
+                  )}
 
                   {/* 3. Descrição curta (line-clamp-2) */}
                   <p 
@@ -782,21 +897,73 @@ export const TaskCatalogView: React.FC = () => {
                 <div className="mt-3 pt-2 flex items-center justify-end gap-1.5 min-h-[36px] relative">
                   {isAdmin ? (
                     status === 'ACTIVE' ? (
-                      <div className="flex items-center gap-1.5 w-full justify-between">
-                        <button
-                          id={`btn-edit-family-${task.id}`}
-                          type="button"
-                          onClick={() => {
-                            const foundFt = familyTasks.find(f => f.taskMasterId === task.id || f.task_master_id === task.id || f.id === task.id);
-                            if (foundFt) setEditingFamilyTaskId(foundFt.id);
-                          }}
-                          className="min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-semibold text-brand-primary bg-brand-primary-soft hover:bg-brand-primary hover:text-text-on-primary transition-colors flex items-center gap-1 cursor-pointer"
-                          aria-label={`Editar ${displayName} na minha casa`}
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>Editar</span>
-                        </button>
+                      <div className="flex items-center gap-1.5 w-full justify-between flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* Botão Editar (com suporte a múltiplos ambientes) */}
+                          <div className="relative">
+                            <button
+                              id={`btn-edit-family-${task.id}`}
+                              type="button"
+                              onClick={() => {
+                                if (activeRoutines.length === 1) {
+                                  setEditingFamilyTaskId(activeRoutines[0].id);
+                                } else {
+                                  setOpenEditMenuTaskId(openEditMenuTaskId === task.id ? null : task.id);
+                                }
+                              }}
+                              className="min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-semibold text-brand-primary bg-brand-primary-soft hover:bg-brand-primary hover:text-text-on-primary transition-colors flex items-center gap-1 cursor-pointer"
+                              aria-label={`Editar ${displayName} na minha casa`}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Editar</span>
+                            </button>
 
+                            {openEditMenuTaskId === task.id && activeRoutines.length > 1 && (
+                              <div
+                                id={`edit-menu-${task.id}`}
+                                className="absolute left-0 bottom-full mb-1 z-20 w-52 bg-surface-card rounded-xl border border-border-default shadow-lg p-1 animate-in fade-in zoom-in-95 duration-100"
+                                onMouseLeave={() => setOpenEditMenuTaskId(null)}
+                              >
+                                <div className="px-2.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                                  Editar por ambiente:
+                                </div>
+                                {activeRoomsForTask.map(r => {
+                                  const ftInRoom = activeRoutines.find(rItem => (rItem.room_id || rItem.roomId) === r.id);
+                                  if (!ftInRoom) return null;
+                                  return (
+                                    <button
+                                      key={ftInRoom.id}
+                                      id={`btn-edit-room-${ftInRoom.id}`}
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenEditMenuTaskId(null);
+                                        setEditingFamilyTaskId(ftInRoom.id);
+                                      }}
+                                      className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-subtle rounded-lg flex items-center justify-between transition-colors cursor-pointer"
+                                    >
+                                      <span className="truncate">{r.name}</span>
+                                      <Edit3 className="w-3 h-3 text-text-muted shrink-0" />
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Requisito 4: + Adicionar a outro ambiente */}
+                          <button
+                            id={`btn-add-room-${task.id}`}
+                            type="button"
+                            onClick={() => handleOpenAddAnotherRoom(task)}
+                            className="min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-bold text-brand-primary bg-surface-card border border-brand-primary/30 hover:border-brand-primary hover:bg-brand-primary-soft/40 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                            aria-label={`+ Adicionar ${displayName} a outro ambiente`}
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span className="whitespace-nowrap">+ Outro ambiente</span>
+                          </button>
+                        </div>
+
+                        {/* Menu de Opções */}
                         <div className="relative">
                           <button
                             id={`btn-menu-${task.id}`}
@@ -810,21 +977,49 @@ export const TaskCatalogView: React.FC = () => {
 
                           {openMenuTaskId === task.id && (
                             <div 
-                              className="absolute right-0 bottom-full mb-1 z-20 w-48 bg-surface-card rounded-xl border border-border-default shadow-lg p-1 animate-in fade-in zoom-in-95 duration-100"
+                              className="absolute right-0 bottom-full mb-1 z-20 w-52 bg-surface-card rounded-xl border border-border-default shadow-lg p-1 animate-in fade-in zoom-in-95 duration-100"
                               onMouseLeave={() => setOpenMenuTaskId(null)}
                             >
-                              <button
-                                id={`btn-remove-${task.id}`}
-                                type="button"
-                                onClick={() => {
-                                  setOpenMenuTaskId(null);
-                                  handleOpenSingleRemove(task);
-                                }}
-                                className="w-full text-left px-3 py-2 text-xs font-medium text-state-error hover:bg-state-error-soft rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>Remover da minha casa</span>
-                              </button>
+                              {activeRoomsForTask.length <= 1 ? (
+                                <button
+                                  id={`btn-remove-${task.id}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuTaskId(null);
+                                    handleOpenSingleRemove(task);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-xs font-medium text-state-error hover:bg-state-error-soft rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Remover da minha casa</span>
+                                </button>
+                              ) : (
+                                <>
+                                  <div className="px-2.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                                    Remover de ambiente:
+                                  </div>
+                                  {activeRoomsForTask.map(r => {
+                                    const ftInRoom = activeRoutines.find(rItem => (rItem.room_id || rItem.roomId) === r.id);
+                                    if (!ftInRoom) return null;
+                                    return (
+                                      <button
+                                        key={ftInRoom.id}
+                                        id={`btn-remove-room-${ftInRoom.id}`}
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenMenuTaskId(null);
+                                          setTasksForRemove([{ taskMaster: task, familyTask: ftInRoom }]);
+                                          setIsRemoveModalOpen(true);
+                                        }}
+                                        className="w-full text-left px-2.5 py-1.5 text-xs font-medium text-state-error hover:bg-state-error-soft rounded-lg flex items-center gap-2 transition-colors cursor-pointer"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                                        <span className="truncate">Remover de {r.name}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -888,6 +1083,21 @@ export const TaskCatalogView: React.FC = () => {
         isOpen={Boolean(editingFamilyTaskId)}
         onClose={() => setEditingFamilyTaskId(null)}
         familyTaskId={editingFamilyTaskId}
+      />
+
+      {/* Add Routine to Another Room Modal (Fase B.5.2) */}
+      <AddRoutineToRoomModal
+        isOpen={isAddRoomModalOpen}
+        onClose={() => {
+          setIsAddRoomModalOpen(false);
+          setTaskForAddRoom(null);
+        }}
+        task={taskForAddRoom}
+        rooms={rooms || []}
+        familyTasks={familyTasks || []}
+        domesticSupports={domesticSupports || []}
+        onConfirm={handleConfirmSingleAddRoutine}
+        isSubmitting={isSubmitting}
       />
     </div>
   );

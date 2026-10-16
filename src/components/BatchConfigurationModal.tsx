@@ -73,42 +73,46 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
   const activeRooms = rooms.filter(r => r.active !== false);
 
   // Initialize configurations when selectedTasks or familyTasks change
+  const getStatusForTaskAndRoom = (taskId: string, roomId: string) => {
+    if (!roomId) return { status: 'NEW' as const, routine: undefined };
+    const existing = familyTasks.find(ft => {
+      const tmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId || ft.id;
+      const ftRoom = ft.room_id || ft.roomId;
+      return tmId === taskId && ftRoom === roomId;
+    });
+    if (!existing) return { status: 'NEW' as const, routine: undefined };
+    return {
+      status: (existing.active !== false ? 'ALREADY_ACTIVE' : 'REACTIVATE') as 'ALREADY_ACTIVE' | 'REACTIVATE',
+      routine: existing
+    };
+  };
+
   useEffect(() => {
     if (!isOpen) return;
 
     const initialConfigs: Record<string, TaskConfigState> = {};
 
     selectedTasks.forEach(task => {
-      const existing = familyTasks.find(ft =>
-        (ft.task_master_id === task.id || ft.taskMasterId === task.id || ft.task_id === task.id || ft.taskId === task.id || ft.id === task.id)
-      );
-
-      let status: 'NEW' | 'REACTIVATE' | 'ALREADY_ACTIVE' = 'NEW';
-      if (existing) {
-        status = existing.active ? 'ALREADY_ACTIVE' : 'REACTIVATE';
-      }
-
       // Room matching logic
       let matchedRoomId = '';
-      if (existing && existing.room_id && activeRooms.some(r => r.id === existing.room_id)) {
-        matchedRoomId = existing.room_id;
-      } else if (existing && existing.roomId && activeRooms.some(r => r.id === existing.roomId)) {
-        matchedRoomId = existing.roomId;
-      } else if (task.room_type && activeRooms.length > 0) {
+      if (task.room_type && activeRooms.length > 0) {
         const matchResult = matchRoomForTask({
           taskRoomType: task.room_type,
           activeRooms
         });
         if (!matchResult.isAmbiguous && matchResult.matchedRoomId) {
-          matchedRoomId = matchResult.matchedRoomId;
-        } else {
-          // Ambiguidade (>1 matches) ou 0 matches: sem fallback silencioso para o primeiro cômodo!
-          // Exige escolha explícita do usuário.
-          matchedRoomId = '';
+          const roomCheck = getStatusForTaskAndRoom(task.id, matchResult.matchedRoomId);
+          if (roomCheck.status !== 'ALREADY_ACTIVE') {
+            matchedRoomId = matchResult.matchedRoomId;
+          }
         }
-      } else {
-        matchedRoomId = '';
       }
+
+      const roomStatus = getStatusForTaskAndRoom(task.id, matchedRoomId);
+      const status = roomStatus.status;
+      const existing = roomStatus.routine || familyTasks.find(ft =>
+        (ft.task_master_id === task.id || ft.taskMasterId === task.id || ft.task_id === task.id || ft.taskId === task.id || ft.id === task.id)
+      );
 
       // Frequency matching logic
       let freq = 'DAILY';
@@ -178,13 +182,28 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
   if (!isOpen) return null;
 
   const handleUpdateConfig = (taskId: string, partial: Partial<TaskConfigState>) => {
-    setConfigs(prev => ({
-      ...prev,
-      [taskId]: {
-        ...prev[taskId],
-        ...partial
+    setConfigs(prev => {
+      const current = prev[taskId];
+      const newRoomId = partial.roomId !== undefined ? partial.roomId : current.roomId;
+      let newStatus = current.status;
+      let newRoutineId = current.existingRoutineId;
+
+      if (partial.roomId !== undefined) {
+        const check = getStatusForTaskAndRoom(taskId, newRoomId);
+        newStatus = check.status;
+        newRoutineId = check.routine?.id;
       }
-    }));
+
+      return {
+        ...prev,
+        [taskId]: {
+          ...current,
+          ...partial,
+          status: newStatus,
+          existingRoutineId: newRoutineId
+        }
+      };
+    });
     setValidationError(null);
   };
 
@@ -502,11 +521,17 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                         aria-label={`Cômodo para ${task.name}`}
                       >
                         <option value="">Selecione o cômodo...</option>
-                        {activeRooms.map(r => (
-                          <option key={r.id} value={r.id}>
-                            {r.name}
-                          </option>
-                        ))}
+                        {activeRooms.map(r => {
+                          const rCheck = getStatusForTaskAndRoom(task.id, r.id);
+                          const isAlreadyActiveInR = rCheck.status === 'ALREADY_ACTIVE';
+                          const isReactivateInR = rCheck.status === 'REACTIVATE';
+                          const suffix = isAlreadyActiveInR ? ' — Já ativa' : (isReactivateInR ? ' — Reativar' : ' — Disponível');
+                          return (
+                            <option key={r.id} value={r.id} disabled={isAlreadyActiveInR}>
+                              {r.name}{suffix}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
