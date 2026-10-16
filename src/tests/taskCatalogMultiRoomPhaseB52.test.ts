@@ -460,5 +460,127 @@ export function runTaskCatalogMultiRoomPhaseB52TestSuite(): CmrTestResult[] {
     });
   });
 
+  // --- HOTFIX B.5.2-HF1: VALIDAÇÃO DE SELEÇÃO EXPLÍCITA E ACESSIBILIDADE MOBILE ---
+
+  // CMR-17 (HF1.1): Modal abre em estado neutro sem nenhum ambiente pré-selecionado
+  record('CMR-17', 'AddRoutineToRoomModal abre em estado neutro sem nenhum ambiente pré-selecionado', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AddRoutineToRoomModal, {
+        isOpen: true,
+        onClose: () => {},
+        task: sampleTask,
+        rooms: sampleRooms,
+        familyTasks: [],
+        domesticSupports: sampleSupports,
+        onConfirm: async () => {}
+      })
+    );
+
+    // Nenhum radio deve estar com aria-checked="true"
+    if (html.includes('aria-checked="true"')) {
+      throw new Error('Nenhum cômodo pode vir pré-selecionado no estado inicial do modal');
+    }
+    // Deve exibir o aviso neutro orientando o usuário
+    if (!html.includes('room-unselected-hint') || !html.includes('Nenhum ambiente selecionado')) {
+      throw new Error('Deve exibir estado neutro com aviso informativo quando nenhum cômodo estiver selecionado');
+    }
+  });
+
+  // CMR-18 (HF1.1): Botão de confirmação permanece desabilitado enquanto não houver ambiente selecionado
+  record('CMR-18', 'Botão de confirmação permanece desabilitado no estado neutro inicial', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AddRoutineToRoomModal, {
+        isOpen: true,
+        onClose: () => {},
+        task: sampleTask,
+        rooms: sampleRooms,
+        familyTasks: [],
+        domesticSupports: sampleSupports,
+        onConfirm: async () => {}
+      })
+    );
+
+    if (!html.includes('id="btn-confirm-add-room"') || !html.includes('disabled=""')) {
+      throw new Error('O botão de confirmação deve permanecer com atributo disabled no estado neutro');
+    }
+    if (!html.includes('Criar rotina neste ambiente')) {
+      throw new Error('O botão de confirmação desabilitado deve exibir rótulo claro');
+    }
+  });
+
+  // CMR-19 (HF1.1): Seções de configuração e resumo só são renderizadas após seleção explícita
+  record('CMR-19', 'Seções de frequência, horário, público e resumo ficam ocultas até a escolha explícita do ambiente', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AddRoutineToRoomModal, {
+        isOpen: true,
+        onClose: () => {},
+        task: sampleTask,
+        rooms: sampleRooms,
+        familyTasks: [],
+        domesticSupports: sampleSupports,
+        onConfirm: async () => {}
+      })
+    );
+
+    if (html.includes('routine-frequency-select') || html.includes('routine-time-input') || html.includes('add-room-confirmation-summary')) {
+      throw new Error('Seções subsequentes não podem ser exibidas enquanto não houver ambiente selecionado');
+    }
+  });
+
+  // CMR-20 (HF1.2): Modal possui altura máxima 90vh e corpo rolável interno com padding inferior seguro
+  record('CMR-20', 'Modal adota max-h-[90vh], overflow-y-auto no corpo e padding seguro pb-6', () => {
+    const modalPath = path.resolve(process.cwd(), 'src/components/AddRoutineToRoomModal.tsx');
+    const content = fs.readFileSync(modalPath, 'utf-8');
+
+    if (!content.includes('max-h-[90vh]')) {
+      throw new Error('O container do modal deve utilizar max-h-[90vh] para responsividade em viewport móvel');
+    }
+    if (!content.includes('overflow-y-auto') || !content.includes('pb-6')) {
+      throw new Error('O corpo do formulário deve ter overflow-y-auto e espaçamento pb-6 para evitar corte de tela');
+    }
+  });
+
+  // CMR-21 (HF1.2): Rodapé fixo (sticky footer) fora do corpo rolável com divisor e shrink-0
+  record('CMR-21', 'Rodapé com ações de Cancelar e Confirmar permanece fixo e acessível fora do corpo rolável', () => {
+    const modalPath = path.resolve(process.cwd(), 'src/components/AddRoutineToRoomModal.tsx');
+    const content = fs.readFileSync(modalPath, 'utf-8');
+
+    if (!content.includes('border-t') || !content.includes('shrink-0')) {
+      throw new Error('O rodapé deve possuir shrink-0 e borda divisória para garantir visibilidade permanente');
+    }
+    if (!content.includes('id="btn-cancel-add-room"') || !content.includes('id="btn-confirm-add-room"')) {
+      throw new Error('O rodapé deve conter os botões btn-cancel-add-room e btn-confirm-add-room');
+    }
+  });
+
+  // CMR-22 (HF1.2): Resumo da rotina destaca com clareza Ambiente, Frequência, Horário e Responsável
+  record('CMR-22', 'Resumo de confirmação destaca com clareza Ambiente, Frequência, Horário e Responsável', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(AddRoutineToRoomModal, {
+        isOpen: true,
+        onClose: () => {},
+        task: sampleTask,
+        rooms: sampleRooms,
+        familyTasks: [],
+        domesticSupports: sampleSupports,
+        initialRoomId: 'room-social',
+        onConfirm: async () => {}
+      })
+    );
+
+    if (!html.includes('Ambiente:</strong> Banheiro social')) {
+      throw new Error('Resumo deve conter destaque para Ambiente');
+    }
+    if (!html.includes('Frequência:</strong>')) {
+      throw new Error('Resumo deve conter destaque para Frequência');
+    }
+    if (!html.includes('Horário:</strong>')) {
+      throw new Error('Resumo deve conter destaque para Horário');
+    }
+    if (!html.includes('Responsável:</strong>')) {
+      throw new Error('Resumo deve conter destaque para Responsável');
+    }
+  });
+
   return results;
 }

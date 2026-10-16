@@ -10,7 +10,8 @@ import {
   RotateCcw,
   Users,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  Info
 } from 'lucide-react';
 import { TaskMaster, FamilyTask, Room, DomesticSupport, ExecutionTarget, BatchAddRoutineInput } from '../types';
 import { taskCategoryLabels } from '../data/tasks';
@@ -142,22 +143,27 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
     setExecutionTarget('HOUSEHOLD');
     setDomesticSupportId(activeSupports[0]?.id || null);
 
-    // Auto-select first available or reactivatable room if any
-    const firstAvailable = roomStatusList.find(rs => rs.status !== 'ALREADY_ACTIVE');
-    if (firstAvailable) {
-      setSelectedRoomId(firstAvailable.room.id);
-      if (firstAvailable.status === 'REACTIVATE' && firstAvailable.routine) {
-        const r = firstAvailable.routine;
-        if (r.frequency) setFrequency(r.frequency.toUpperCase());
-        if (r.preferred_days || r.preferredDays) setPreferredDays(r.preferred_days || r.preferredDays || [1]);
-        if (r.preferred_time || r.preferredTime) setPreferredTime(r.preferred_time || r.preferredTime || '09:00');
-        if (r.executionTarget) setExecutionTarget(r.executionTarget);
-        if (r.domesticSupportId) setDomesticSupportId(r.domesticSupportId);
+    // HOTFIX B.5.2-HF1: Sem seleção automática por posição, alfabética ou fallback.
+    // O modal deve sempre abrir com estado neutro inicial (nenhum cômodo selecionado).
+    // Apenas seleciona se initialRoomId tiver sido explicitamente fornecido e for válido.
+    if (initialRoomId) {
+      const initialMatch = roomStatusList.find(rs => rs.room.id === initialRoomId);
+      if (initialMatch && initialMatch.status !== 'ALREADY_ACTIVE') {
+        setSelectedRoomId(initialRoomId);
+        if (initialMatch.status === 'REACTIVATE' && initialMatch.routine) {
+          const r = initialMatch.routine;
+          if (r.frequency) setFrequency(r.frequency.toUpperCase());
+          if (r.preferred_days || r.preferredDays) setPreferredDays(r.preferred_days || r.preferredDays || [1]);
+          if (r.preferred_time || r.preferredTime) setPreferredTime(r.preferred_time || r.preferredTime || '09:00');
+          if (r.executionTarget) setExecutionTarget(r.executionTarget);
+          if (r.domesticSupportId) setDomesticSupportId(r.domesticSupportId);
+        }
+        return;
       }
-    } else {
-      setSelectedRoomId('');
     }
-  }, [isOpen, task]);
+    // Estado neutro inicial obrigatório
+    setSelectedRoomId('');
+  }, [isOpen, task, initialRoomId]);
 
   // Handle selecting a room
   const handleSelectRoom = (rId: string) => {
@@ -278,7 +284,7 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
   return (
     <div
       id="add-routine-to-room-modal-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
       onClick={e => {
         if (e.target === e.currentTarget && !isSubmitting) onClose();
       }}
@@ -288,10 +294,10 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
     >
       <div 
         id="add-routine-to-room-modal-container"
-        className="w-full max-w-lg bg-surface-card border border-border-default rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-200"
+        className="w-full max-w-lg bg-surface-card border border-border-default rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200"
       >
-        {/* Header */}
-        <div className="p-5 sm:p-6 border-b border-border-default flex items-start justify-between gap-4 bg-surface-subtle/40">
+        {/* Header - Fixed top bar */}
+        <div className="p-4 sm:p-6 border-b border-border-default flex items-start justify-between gap-4 bg-surface-subtle/40 shrink-0">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-brand-primary-soft text-brand-primary">
@@ -321,19 +327,21 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
           </button>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 p-5 sm:p-6 space-y-5">
-          {/* Validation Error Banner */}
-          {validationError && (
-            <div 
-              id="add-room-validation-error" 
-              role="alert"
-              className="p-3.5 bg-state-error-soft border border-state-error/30 rounded-2xl flex items-center gap-2.5 text-xs sm:text-sm text-state-error font-medium"
-            >
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{validationError}</span>
-            </div>
-          )}
+        {/* Form wrapping scrollable content and sticky footer */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Scrollable Content Body with smooth scrolling and bottom padding */}
+          <div className="overflow-y-auto overscroll-contain flex-1 p-4 sm:p-6 space-y-5 pb-6">
+            {/* Validation Error Banner */}
+            {validationError && (
+              <div 
+                id="add-room-validation-error" 
+                role="alert"
+                className="p-3.5 bg-state-error-soft border border-state-error/30 rounded-2xl flex items-center gap-2.5 text-xs sm:text-sm text-state-error font-medium"
+              >
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{validationError}</span>
+              </div>
+            )}
 
           {/* Section 1: Room Selector */}
           <div>
@@ -423,6 +431,17 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
                 );
               })}
             </div>
+
+            {/* Neutral unselected state hint (HF1.1) */}
+            {!selectedRoomId && (
+              <div 
+                id="room-unselected-hint"
+                className="mt-3 p-3.5 bg-surface-subtle/80 border border-dashed border-border-default rounded-2xl flex items-center gap-2.5 text-xs text-text-muted"
+              >
+                <Info className="w-4 h-4 text-brand-primary shrink-0" />
+                <span>Nenhum ambiente selecionado. Escolha um cômodo acima para prosseguir com a configuração.</span>
+              </div>
+            )}
           </div>
 
           {/* Section 2: Frequency & Schedule */}
@@ -614,49 +633,53 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
                 )}
               </div>
 
-              {/* Section 4: Clear Confirmation Summary (Requisito 8) */}
+              {/* Section 4: Clear Confirmation Summary (Requisito 8 & HF1.2) */}
               <div 
                 id="add-room-confirmation-summary"
-                className={`p-3.5 rounded-2xl border text-xs space-y-1.5 ${
+                className={`p-4 rounded-2xl border text-xs sm:text-sm space-y-2.5 ${
                   isReactivation 
                     ? 'bg-state-warning-soft/60 border-state-warning/30' 
                     : 'bg-surface-subtle/80 border-border-default'
                 }`}
               >
-                <div className="flex items-center gap-1.5 font-bold text-text-primary">
+                <div className="flex items-center gap-2 font-bold text-text-primary text-xs sm:text-sm">
                   <ShieldCheck className="w-4 h-4 text-brand-primary shrink-0" />
                   <span>Resumo da rotina para confirmação:</span>
                 </div>
-                <div className="pl-5 space-y-0.5 text-text-secondary">
+                <div className="pl-6 space-y-1.5 text-xs text-text-secondary">
                   <p>
-                    <strong className="text-text-primary">Ambiente:</strong> {selectedRoomInfo?.room.name}
+                    <strong className="text-text-primary font-semibold">Ambiente:</strong> {selectedRoomInfo?.room.name}
                   </p>
                   <p>
-                    <strong className="text-text-primary">Frequência:</strong> {getFrequencyLabel()} às {preferredTime}
+                    <strong className="text-text-primary font-semibold">Frequência:</strong> {getFrequencyLabel()}
                   </p>
                   <p>
-                    <strong className="text-text-primary">Público:</strong> {executionTarget === 'HOUSEHOLD' ? 'Pessoas da casa' : `Apoio externo (${selectedSupportName})`}
+                    <strong className="text-text-primary font-semibold">Horário:</strong> {preferredTime}
                   </p>
-                  <p className="pt-1 text-[11px] font-medium text-text-muted border-t border-border-default/40 mt-1">
+                  <p>
+                    <strong className="text-text-primary font-semibold">Responsável:</strong> {executionTarget === 'HOUSEHOLD' ? 'Pessoas da casa (distribuído pelo Motor 2.0)' : `Apoio externo (${selectedSupportName})`}
+                  </p>
+                  <div className="pt-2 text-[11px] font-medium text-text-muted border-t border-border-default/40 mt-1">
                     {isReactivation ? (
-                      <span className="text-state-warning font-semibold flex items-center gap-1">
-                        <RotateCcw className="w-3 h-3" />
-                        Reativação canônica: reutiliza o identificador da rotina arquivada e preserva o histórico.
+                      <span className="text-state-warning font-semibold flex items-center gap-1.5">
+                        <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                        <span>Reativação canônica: reutiliza o identificador da rotina arquivada e preserva o histórico.</span>
                       </span>
                     ) : (
-                      <span className="text-state-success font-semibold flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" />
-                        Nova rotina independente: as rotinas desta tarefa em outros cômodos permanecem intactas.
+                      <span className="text-state-success font-semibold flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                        <span>Nova rotina independente: as rotinas desta tarefa em outros cômodos permanecem intactas.</span>
                       </span>
                     )}
-                  </p>
+                  </div>
                 </div>
               </div>
             </div>
           )}
+          </div>
 
-          {/* Footer Actions */}
-          <div className="pt-4 border-t border-border-default flex items-center justify-end gap-2.5">
+          {/* Sticky Footer Actions (HF1.2) */}
+          <div className="p-4 sm:px-6 sm:py-4 border-t border-border-default bg-surface-card/95 backdrop-blur-xs flex items-center justify-end gap-2.5 shrink-0 shadow-xs">
             <button
               id="btn-cancel-add-room"
               type="button"
@@ -675,6 +698,11 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
             >
               {isSubmitting ? (
                 <span>Salvando...</span>
+              ) : !selectedRoomId ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>Criar rotina neste ambiente</span>
+                </>
               ) : isReactivation ? (
                 <>
                   <RotateCcw className="w-4 h-4" />
@@ -683,7 +711,7 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>Adicionar ao {selectedRoomInfo?.room.name || 'ambiente'}</span>
+                  <span>Criar rotina no {selectedRoomInfo?.room.name || 'ambiente'}</span>
                 </>
               )}
             </button>

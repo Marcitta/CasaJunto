@@ -1077,8 +1077,8 @@ for (const r of mrResults) {
   }
 }
 
-// 75. CASA JUNTO — FASE B.5.2: CATÁLOGO MULTIAMBIENTE (16 TESTES: CMR-01 - CMR-16)
-console.log('\n--- GRUPO 75: FASE B.5.2: CATÁLOGO MULTIAMBIENTE (CMR-01 - CMR-16) ---');
+// 75. CASA JUNTO — FASE B.5.2 & HOTFIX B.5.2-HF1: CATÁLOGO MULTIAMBIENTE E SELEÇÃO EXPLÍCITA (22 TESTES: CMR-01 - CMR-22)
+console.log('\n--- GRUPO 75: FASE B.5.2 & HOTFIX B.5.2-HF1: CATÁLOGO MULTIAMBIENTE E SELEÇÃO EXPLÍCITA (CMR-01 - CMR-22) ---');
 const cmrResults = runTaskCatalogMultiRoomPhaseB52TestSuite();
 for (const r of cmrResults) {
   totalTests++;
