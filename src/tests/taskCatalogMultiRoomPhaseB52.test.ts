@@ -1,12 +1,12 @@
 /**
- * CASA JUNTO — FASE B.5.2: CATÁLOGO MULTIAMBIENTE
- * Suíte de Testes Integrados (CMR-01 a CMR-16)
+ * CASA JUNTO — FASE B.5.2 & HOTFIXES HF1/HF2: CATÁLOGO MULTIAMBIENTE
+ * Suíte de Testes Integrados (CMR-01 a CMR-23)
  *
  * Validações obrigatórias:
  * CMR-01: Tarefa ainda não cadastrada exibe status "Disponível" e botão "Adicionar"
  * CMR-02: Tarefa ativa em 1 ambiente exibe "Na casa" e texto "Ativa em: [nome do ambiente]"
  * CMR-03: Tarefa ativa em múltiplos ambientes exibe badge "X ambientes" e lista todos os ambientes ("Ativa em: A, B")
- * CMR-04: Card ativo exibe botão "+ Outro ambiente" com id btn-add-room-${task.id}
+ * CMR-04: Card ativo exibe botão "Outro ambiente" com id btn-add-room-${task.id}
  * CMR-05: Modal AddRoutineToRoomModal renderiza lista de ambientes ativos da família
  * CMR-06: No modal, ambiente com tarefa já ativa recebe selo "Já ativa" e fica desabilitado
  * CMR-07: No modal, ambiente sem a tarefa recebe selo "Disponível" e é selecionável
@@ -19,6 +19,13 @@
  * CMR-14: Menu "Editar" quando há múltiplas rotinas ativas oferece escolha do ambiente a editar
  * CMR-15: Padrões de acessibilidade: role="dialog", role="radiogroup", role="radio", aria-checked, tap targets >= 44px
  * CMR-16: Arquivos core do Motor 2.0 e scheduler permanecem 100% intocados
+ * CMR-17 (HF1): Modal abre em estado neutro sem nenhum ambiente pré-selecionado
+ * CMR-18 (HF1): Botão de confirmação permanece desabilitado no estado neutro inicial
+ * CMR-19 (HF1): Seções de configuração e resumo ficam ocultas até escolha explícita do ambiente
+ * CMR-20 (HF1): Modal adota max-h-[90vh], overflow-y-auto no corpo e padding seguro pb-6
+ * CMR-21 (HF1): Rodapé permanece fixo e acessível fora do corpo rolável
+ * CMR-22 (HF1): Resumo destaca Ambiente, Frequência, Horário e Responsável
+ * CMR-23 (HF2): Botão btn-add-room não possui símbolo + duplicado (renderiza Plus icon + "Outro ambiente")
  */
 
 import React from 'react';
@@ -169,16 +176,19 @@ export function runTaskCatalogMultiRoomPhaseB52TestSuite(): CmrTestResult[] {
     }
   });
 
-  // CMR-04: Card ativo exibe botão "+ Outro ambiente"
-  record('CMR-04', 'Componente TaskCatalogView disponibiliza botão "+ Outro ambiente" com id btn-add-room', () => {
+  // CMR-04: Card ativo exibe botão de adicionar a outro ambiente com id btn-add-room
+  record('CMR-04', 'Componente TaskCatalogView disponibiliza botão de adicionar a outro ambiente com id btn-add-room', () => {
     const catalogPath = path.resolve(process.cwd(), 'src/components/TaskCatalogView.tsx');
     const content = fs.readFileSync(catalogPath, 'utf-8');
 
     if (!content.includes('id={`btn-add-room-${task.id}`}') && !content.includes('id={"btn-add-room-" + task.id}')) {
       throw new Error('TaskCatalogView deve conter o botão btn-add-room-${task.id}');
     }
-    if (!content.includes('+ Outro ambiente')) {
-      throw new Error('TaskCatalogView deve exibir o rótulo "+ Outro ambiente"');
+    if (!content.includes('Outro ambiente')) {
+      throw new Error('TaskCatalogView deve exibir o rótulo "Outro ambiente"');
+    }
+    if (!content.includes('<Plus className="w-3.5 h-3.5" />')) {
+      throw new Error('TaskCatalogView deve conter o ícone Plus no botão de outro ambiente');
     }
   });
 
@@ -579,6 +589,19 @@ export function runTaskCatalogMultiRoomPhaseB52TestSuite(): CmrTestResult[] {
     }
     if (!html.includes('Responsável:</strong>')) {
       throw new Error('Resumo deve conter destaque para Responsável');
+    }
+  });
+
+  // CMR-23 (HF2): Botão de adicionar a outro ambiente não duplica o símbolo +, usando ícone Plus e texto limpo "Outro ambiente"
+  record('CMR-23', 'Botão btn-add-room não possui símbolo + duplicado (renderiza Plus icon + "Outro ambiente")', () => {
+    const catalogPath = path.resolve(process.cwd(), 'src/components/TaskCatalogView.tsx');
+    const content = fs.readFileSync(catalogPath, 'utf-8');
+
+    if (content.includes('+ Outro ambiente')) {
+      throw new Error('Não deve conter o texto "+ Outro ambiente" duplicando o ícone de adição');
+    }
+    if (!content.includes('<Plus className="w-3.5 h-3.5" />') || !content.includes('Outro ambiente')) {
+      throw new Error('Deve conter o ícone Plus e o texto "Outro ambiente"');
     }
   });
 

@@ -73,6 +73,7 @@ import { runRoomPresetPhaseBTestSuite } from './roomPresetPhaseB.test';
 import { runUnifiedAddRoomFlowTestSuite } from './unifiedAddRoomFlow.test';
 import { runMultiRoomPhaseB51TestSuite } from './routineMultiRoomPhaseB51.test';
 import { runTaskCatalogMultiRoomPhaseB52TestSuite } from './taskCatalogMultiRoomPhaseB52.test';
+import { runTaskCatalogMultiRoomPhaseB53TestSuite } from './taskCatalogMultiRoomPhaseB53.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1077,10 +1078,24 @@ for (const r of mrResults) {
   }
 }
 
-// 75. CASA JUNTO — FASE B.5.2 & HOTFIX B.5.2-HF1: CATÁLOGO MULTIAMBIENTE E SELEÇÃO EXPLÍCITA (22 TESTES: CMR-01 - CMR-22)
-console.log('\n--- GRUPO 75: FASE B.5.2 & HOTFIX B.5.2-HF1: CATÁLOGO MULTIAMBIENTE E SELEÇÃO EXPLÍCITA (CMR-01 - CMR-22) ---');
+// 75. CASA JUNTO — FASE B.5.2 & HOTFIXES HF1/HF2: CATÁLOGO MULTIAMBIENTE E SÍMBOLO + LIMPO (23 TESTES: CMR-01 - CMR-23)
+console.log('\n--- GRUPO 75: FASE B.5.2 & HOTFIXES HF1/HF2: CATÁLOGO MULTIAMBIENTE E SÍMBOLO + LIMPO (CMR-01 - CMR-23) ---');
 const cmrResults = runTaskCatalogMultiRoomPhaseB52TestSuite();
 for (const r of cmrResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 76. CASA JUNTO — FASE B.5.3: SELEÇÃO MULTIAMBIENTE EM LOTE (20 TESTES: B53-01 - B53-20)
+console.log('\n--- GRUPO 76: FASE B.5.3: SELEÇÃO MULTIAMBIENTE EM LOTE (B53-01 - B53-20) ---');
+const b53Results = runTaskCatalogMultiRoomPhaseB53TestSuite();
+for (const r of b53Results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

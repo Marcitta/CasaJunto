@@ -273,10 +273,10 @@ export const TaskCatalogView: React.FC = () => {
     setSelectedTaskIds(new Set());
   };
 
-  // Open batch add configuration
+  // Open batch add configuration (Fase B.5.3: permite configurar qualquer tarefa selecionada em multiambiente)
   const handleOpenBatchConfig = () => {
-    if (!isAdmin || tasksToAddOrReactivate.length === 0) return;
-    setTasksForConfig(tasksToAddOrReactivate);
+    if (!isAdmin || selectedTasksList.length === 0) return;
+    setTasksForConfig(selectedTasksList);
     setIsConfigModalOpen(true);
   };
 
@@ -693,14 +693,14 @@ export const TaskCatalogView: React.FC = () => {
             id="btn-batch-add"
             type="button"
             onClick={handleOpenBatchConfig}
-            disabled={!isAdmin || tasksToAddOrReactivate.length === 0}
+            disabled={!isAdmin || selectedTasksList.length === 0}
             className={`min-h-[38px] px-3.5 py-1.5 rounded-xl font-bold text-xs bg-brand-primary text-text-on-primary hover:bg-brand-primary-hover shadow-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-              tasksToAddOrReactivate.length === 0 ? 'hidden' : ''
+              selectedTasksList.length === 0 ? 'hidden' : ''
             }`}
             aria-label="Adicionar selecionadas à rotina da casa"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Adicionar ({tasksToAddOrReactivate.length})</span>
+            <span>Adicionar ({selectedTasksList.length})</span>
           </button>
 
           {/* Batch Remove button */}
@@ -956,10 +956,10 @@ export const TaskCatalogView: React.FC = () => {
                             type="button"
                             onClick={() => handleOpenAddAnotherRoom(task)}
                             className="min-h-[36px] px-2.5 py-1.5 rounded-xl text-xs font-bold text-brand-primary bg-surface-card border border-brand-primary/30 hover:border-brand-primary hover:bg-brand-primary-soft/40 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                            aria-label={`+ Adicionar ${displayName} a outro ambiente`}
+                            aria-label={`Adicionar ${displayName} a outro ambiente`}
                           >
                             <Plus className="w-3.5 h-3.5" />
-                            <span className="whitespace-nowrap">+ Outro ambiente</span>
+                            <span className="whitespace-nowrap">Outro ambiente</span>
                           </button>
                         </div>
 
