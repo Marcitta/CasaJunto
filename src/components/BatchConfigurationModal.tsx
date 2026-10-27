@@ -525,10 +525,10 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
               </span>
             </div>
             <h2 id="batch-config-title" className="text-lg sm:text-xl font-bold text-text-primary">
-              Configurar Tarefas em Lote
+              Adicionar tarefas a vários ambientes
             </h2>
             <p className="text-xs sm:text-sm text-text-secondary mt-0.5">
-              Selecione um ou vários ambientes para cada tarefa e defina suas frequências e públicos independentes.
+              Configurar Tarefas em Lote: selecione um ou vários ambientes para cada tarefa e defina suas frequências e públicos independentes.
             </p>
           </div>
           <button
@@ -757,6 +757,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                             {/* Room Header / Checkbox row */}
                             <div className="p-3 flex items-center justify-between gap-3">
                               <label
+                                htmlFor={`check-task-${task.id}-${room.id}`}
                                 className={`flex items-center gap-2.5 min-w-0 flex-1 ${
                                   isAlreadyActive ? 'cursor-not-allowed' : 'cursor-pointer'
                                 }`}

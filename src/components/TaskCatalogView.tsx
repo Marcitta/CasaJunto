@@ -14,6 +14,7 @@ import {
   Pause,
   Edit3,
   MoreHorizontal,
+  Sparkles,
   X
 } from 'lucide-react';
 import { allMasterTasks, taskCategoryLabels, roomTypeLabels } from '../data/tasks';
@@ -697,10 +698,10 @@ export const TaskCatalogView: React.FC = () => {
             className={`min-h-[38px] px-3.5 py-1.5 rounded-xl font-bold text-xs bg-brand-primary text-text-on-primary hover:bg-brand-primary-hover shadow-xs flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               selectedTasksList.length === 0 ? 'hidden' : ''
             }`}
-            aria-label="Adicionar selecionadas à rotina da casa"
+            aria-label="Adicionar em lote"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Adicionar ({selectedTasksList.length})</span>
+            <span>Adicionar em lote ({selectedTasksList.length})</span>
           </button>
 
           {/* Batch Remove button */}
@@ -980,6 +981,19 @@ export const TaskCatalogView: React.FC = () => {
                               className="absolute right-0 bottom-full mb-1 z-20 w-52 bg-surface-card rounded-xl border border-border-default shadow-lg p-1 animate-in fade-in zoom-in-95 duration-100"
                               onMouseLeave={() => setOpenMenuTaskId(null)}
                             >
+                              <button
+                                id={`btn-add-multi-rooms-${task.id}`}
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenuTaskId(null);
+                                  setTasksForConfig([task]);
+                                  setIsConfigModalOpen(true);
+                                }}
+                                className="w-full text-left px-2.5 py-1.5 text-xs font-semibold text-brand-primary hover:bg-brand-primary-soft rounded-lg flex items-center gap-2 transition-colors cursor-pointer border-b border-border-default/60 mb-1 pb-1.5"
+                              >
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Adicionar a vários ambientes</span>
+                              </button>
                               {activeRoomsForTask.length <= 1 ? (
                                 <button
                                   id={`btn-remove-${task.id}`}
