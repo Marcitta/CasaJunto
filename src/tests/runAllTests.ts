@@ -75,6 +75,7 @@ import { runMultiRoomPhaseB51TestSuite } from './routineMultiRoomPhaseB51.test';
 import { runTaskCatalogMultiRoomPhaseB52TestSuite } from './taskCatalogMultiRoomPhaseB52.test';
 import { runTaskCatalogMultiRoomPhaseB53TestSuite } from './taskCatalogMultiRoomPhaseB53.test';
 import { runTaskCatalogMultiRoomInteractiveTests } from './taskCatalogMultiRoomInteractiveB53Hf1.test';
+import { runTaskCatalogMultiRoomLayoutHF2Tests } from './taskCatalogMultiRoomLayoutB53Hf2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1111,6 +1112,20 @@ for (const r of b53Results) {
 console.log('\n--- GRUPO 77: FASE B.5.3-HF1: TESTES DE INTERAÇÃO REAL MULTIAMBIENTE (HF1-01 - HF1-10) ---');
 const hf1InteractiveResults = runTaskCatalogMultiRoomInteractiveTests();
 for (const r of hf1InteractiveResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 78. CASA JUNTO — FASE B.5.3-HF2: TESTES DE LAYOUT DE COLUNA ÚNICA MULTIAMBIENTE (10 TESTES: HF2-01 - HF2-10)
+console.log('\n--- GRUPO 78: FASE B.5.3-HF2: TESTES DE LAYOUT DE COLUNA ÚNICA MULTIAMBIENTE (HF2-01 - HF2-10) ---');
+const hf2LayoutResults = runTaskCatalogMultiRoomLayoutHF2Tests();
+for (const r of hf2LayoutResults) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

@@ -724,7 +724,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                       Marque um ou vários cômodos para criar rotinas independentes (ambientes já ativos são preservados):
                     </p>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    <div className="flex flex-col gap-3 w-full">
                       {activeRooms.map(room => {
                         const roomCfg = taskRoomConfigs[room.id] || {
                           selected: false,
@@ -746,7 +746,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                           <div
                             key={room.id}
                             id={`task-${task.id}-${room.id}`}
-                            className={`rounded-2xl border transition-all ${
+                            className={`w-full rounded-2xl border transition-all ${
                               isAlreadyActive
                                 ? 'bg-surface-subtle/50 border-border-default/60 opacity-60'
                                 : isSelected
@@ -755,10 +755,10 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                             }`}
                           >
                             {/* Room Header / Checkbox row */}
-                            <div className="p-3 flex items-center justify-between gap-3">
+                            <div className="p-3.5 sm:p-4 flex items-center justify-between gap-3">
                               <label
                                 htmlFor={`check-task-${task.id}-${room.id}`}
-                                className={`flex items-center gap-2.5 min-w-0 flex-1 ${
+                                className={`flex items-center gap-3 min-w-0 flex-1 ${
                                   isAlreadyActive ? 'cursor-not-allowed' : 'cursor-pointer'
                                 }`}
                               >
@@ -772,7 +772,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                   aria-label={`Selecionar ${room.name} para ${task.name}`}
                                   aria-disabled={isAlreadyActive}
                                 />
-                                <span className="text-xs sm:text-sm font-semibold text-text-primary truncate">
+                                <span className="text-sm sm:text-base font-semibold text-text-primary truncate">
                                   {room.name}
                                 </span>
                               </label>
@@ -782,25 +782,25 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                 {isAlreadyActive ? (
                                   <span
                                     id={`room-status-already-${task.id}-${room.id}`}
-                                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-surface-subtle text-text-muted border border-border-default"
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-surface-subtle text-text-muted border border-border-default"
                                   >
-                                    <Check className="w-3 h-3 text-state-success" />
+                                    <Check className="w-3.5 h-3.5 text-state-success" />
                                     <span>Já ativa</span>
                                   </span>
                                 ) : isReactivate ? (
                                   <span
                                     id={`room-status-reactivate-${task.id}-${room.id}`}
-                                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-state-warning-soft text-state-warning border border-state-warning/30"
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-state-warning-soft text-state-warning border border-state-warning/30"
                                   >
-                                    <RotateCcw className="w-3 h-3" />
+                                    <RotateCcw className="w-3.5 h-3.5" />
                                     <span>Reativar</span>
                                   </span>
                                 ) : (
                                   <span
                                     id={`room-status-available-${task.id}-${room.id}`}
-                                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-state-success-soft text-state-success border border-state-success/30"
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-state-success-soft text-state-success border border-state-success/30"
                                   >
-                                    <Sparkles className="w-3 h-3" />
+                                    <Sparkles className="w-3.5 h-3.5" />
                                     <span>Disponível</span>
                                   </span>
                                 )}
@@ -811,10 +811,10 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                             {compat.requiresConfirmation && (
                               <div
                                 id={`compat-warning-${task.id}-${room.id}`}
-                                className="mx-3 mb-2 p-2.5 bg-state-warning-soft/70 border border-state-warning/40 rounded-xl text-[11px] text-text-secondary space-y-1.5"
+                                className="mx-3.5 sm:mx-4 mb-3 p-3 bg-state-warning-soft/70 border border-state-warning/40 rounded-xl text-xs text-text-secondary space-y-2"
                               >
-                                <div className="flex items-start gap-1.5 text-state-warning font-bold">
-                                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                <div className="flex items-start gap-2 text-state-warning font-semibold">
+                                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                                   <span>{compat.warning}</span>
                                 </div>
                                 {isSelected && (
@@ -831,7 +831,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                           confirmedCompatibility: e.target.checked
                                         })
                                       }
-                                      className="w-3.5 h-3.5 rounded text-state-warning focus:ring-state-warning cursor-pointer"
+                                      className="w-4 h-4 rounded text-state-warning focus:ring-state-warning cursor-pointer"
                                     />
                                     <span>Confirmar que este ambiente possui equipamento compatível</span>
                                   </label>
@@ -841,13 +841,13 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
 
                             {/* Independent Configuration panel for selected room */}
                             {isSelected && !isAlreadyActive && (
-                              <div className="p-3 pt-2 border-t border-border-default/60 bg-surface-subtle/30 space-y-3 rounded-b-2xl animate-in fade-in-50 duration-150">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                              <div className="p-3.5 sm:p-5 pt-3 border-t border-border-default/60 bg-surface-subtle/30 space-y-4 rounded-b-2xl animate-in fade-in-50 duration-150">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs">
                                   {/* Frequency */}
                                   <div>
                                     <label
                                       htmlFor={`freq-${task.id}-${room.id}`}
-                                      className="block text-[11px] font-medium text-text-secondary mb-1"
+                                      className="block text-xs font-semibold text-text-secondary mb-1"
                                     >
                                       Frequência *
                                     </label>
@@ -857,7 +857,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                       onChange={e =>
                                         handleUpdateRoomConfig(task.id, room.id, { frequency: e.target.value })
                                       }
-                                      className="w-full bg-surface-card border border-border-default rounded-xl px-2.5 py-1.5 text-xs text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                                      className="w-full bg-surface-card border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
                                       aria-label={`Frequência para ${task.name} em ${room.name}`}
                                     >
                                       <option value="DAILY">Diária</option>
@@ -872,9 +872,9 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                   <div>
                                     <label
                                       htmlFor={`time-${task.id}-${room.id}`}
-                                      className="block text-[11px] font-medium text-text-secondary mb-1 flex items-center gap-1"
+                                      className="block text-xs font-semibold text-text-secondary mb-1 flex items-center gap-1.5"
                                     >
-                                      <Clock className="w-3 h-3 text-text-muted" />
+                                      <Clock className="w-3.5 h-3.5 text-text-muted" />
                                       <span>Horário *</span>
                                     </label>
                                     <input
@@ -884,7 +884,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                       onChange={e =>
                                         handleUpdateRoomConfig(task.id, room.id, { preferredTime: e.target.value })
                                       }
-                                      className="w-full bg-surface-card border border-border-default rounded-xl px-2.5 py-1.5 text-xs text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                                      className="w-full bg-surface-card border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
                                       aria-label={`Horário para ${task.name} em ${room.name}`}
                                     />
                                   </div>
@@ -893,10 +893,10 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                 {/* Weekly Days selector */}
                                 {roomCfg.frequency === 'WEEKLY' && (
                                   <div>
-                                    <span className="block text-[11px] font-medium text-text-secondary mb-1">
+                                    <span className="block text-xs font-semibold text-text-secondary mb-1.5">
                                       Dias da semana *
                                     </span>
-                                    <div className="flex flex-wrap gap-1">
+                                    <div className="flex flex-wrap gap-2">
                                       {DAY_LABELS.map(({ day, label }) => {
                                         const isDaySelected = roomCfg.preferredDays?.includes(day);
                                         return (
@@ -905,7 +905,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                             id={`btn-day-${task.id}-${room.id}-${day}`}
                                             type="button"
                                             onClick={() => handleToggleDay(task.id, room.id, day)}
-                                            className={`min-h-[32px] px-2.5 py-1 text-[11px] rounded-lg font-bold transition-all cursor-pointer ${
+                                            className={`min-h-[38px] min-w-[42px] sm:min-w-[48px] px-3 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer ${
                                               isDaySelected
                                                 ? 'bg-brand-primary text-text-on-primary shadow-2xs'
                                                 : 'bg-surface-card text-text-secondary border border-border-default hover:bg-surface-subtle'
@@ -926,7 +926,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                   <div className="flex items-center gap-2">
                                     <label
                                       htmlFor={`dom-${task.id}-${room.id}`}
-                                      className="text-[11px] font-medium text-text-secondary"
+                                      className="text-xs font-medium text-text-secondary"
                                     >
                                       Dia do mês (1 a 31):
                                     </label>
@@ -941,7 +941,7 @@ export const BatchConfigurationModal: React.FC<BatchConfigurationModalProps> = (
                                           dayOfMonth: Math.max(1, Math.min(31, parseInt(e.target.value) || 1))
                                         })
                                       }
-                                      className="w-20 bg-surface-card border border-border-default rounded-xl px-2.5 py-1 text-xs text-text-primary"
+                                      className="w-24 bg-surface-card border border-border-default rounded-xl px-3 py-1.5 text-xs text-text-primary"
                                     />
                                   </div>
                                 )}
