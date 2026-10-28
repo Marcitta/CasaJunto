@@ -77,6 +77,7 @@ import { runTaskCatalogMultiRoomPhaseB53TestSuite } from './taskCatalogMultiRoom
 import { runTaskCatalogMultiRoomInteractiveTests } from './taskCatalogMultiRoomInteractiveB53Hf1.test';
 import { runTaskCatalogMultiRoomLayoutHF2Tests } from './taskCatalogMultiRoomLayoutB53Hf2.test';
 import { runTaskMultiRoomDedicatedViewB54TestSuite } from './taskMultiRoomDedicatedViewB54.test';
+import { runTaskMultiRoomInheritanceB54Hf1TestSuite } from './taskMultiRoomInheritanceB54Hf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1141,6 +1142,20 @@ for (const r of hf2LayoutResults) {
 console.log('\n--- GRUPO 79: FASE B.5.4: TELA DEDICADA DE CONFIGURAÇÃO MULTIAMBIENTE (B54-01 - B54-12) ---');
 const b54Results = runTaskMultiRoomDedicatedViewB54TestSuite();
 for (const r of b54Results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 80. CASA JUNTO — FASE B.5.4-HF1: CONFIGURAÇÃO PADRÃO COM PERSONALIZAÇÃO POR AMBIENTE (12 TESTES: HF1B-01 - HF1B-12)
+console.log('\n--- GRUPO 80: FASE B.5.4-HF1: CONFIGURAÇÃO PADRÃO COM PERSONALIZAÇÃO POR AMBIENTE (HF1B-01 - HF1B-12) ---');
+const b54Hf1Results = runTaskMultiRoomInheritanceB54Hf1TestSuite();
+for (const r of b54Hf1Results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

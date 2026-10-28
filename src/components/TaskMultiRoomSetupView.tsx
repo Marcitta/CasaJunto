@@ -37,12 +37,16 @@ export interface RoomConfigItem {
   frequency: string;
   preferredDays: number[];
   dayOfMonth: number;
+  specificDate?: string;
   preferredTime: string;
   executionTarget: ExecutionTarget;
   domesticSupportId: string | null;
   status: 'NEW' | 'REACTIVATE' | 'ALREADY_ACTIVE';
   existingRoutineId?: string;
   confirmedCompatibility?: boolean;
+  isCustomized?: boolean;
+  isExpanded?: boolean;
+  confirmingReset?: boolean;
 }
 
 const DAY_LABELS = [
@@ -178,12 +182,73 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
   // Common Configuration Toolbar State (Etapa 2)
   const [commonFreq, setCommonFreq] = useState<string>('DAILY');
   const [commonTime, setCommonTime] = useState<string>('09:00');
+  const [commonDays, setCommonDays] = useState<number[]>([1]);
+  const [commonDayOfMonth, setCommonDayOfMonth] = useState<number>(1);
+  const [commonSpecificDate, setCommonSpecificDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  });
   const [commonTarget, setCommonTarget] = useState<ExecutionTarget>('HOUSEHOLD');
   const [commonSupportId, setCommonSupportId] = useState<string | null>(null);
   const [showCommonTargetDropdown, setShowCommonTargetDropdown] = useState<boolean>(false);
 
   // Validation & feedback state
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Update common config and automatically propagate to all non-customized rooms
+  const updateCommonConfig = (updates: {
+    freq?: string;
+    time?: string;
+    days?: number[];
+    dayOfMonth?: number;
+    specificDate?: string;
+    target?: ExecutionTarget;
+    supportId?: string | null;
+  }) => {
+    const nextFreq = updates.freq !== undefined ? updates.freq : commonFreq;
+    const nextTime = updates.time !== undefined ? updates.time : commonTime;
+    const nextDays = updates.days !== undefined ? updates.days : commonDays;
+    const nextDom = updates.dayOfMonth !== undefined ? updates.dayOfMonth : commonDayOfMonth;
+    const nextDate = updates.specificDate !== undefined ? updates.specificDate : commonSpecificDate;
+    const nextTarget = updates.target !== undefined ? updates.target : commonTarget;
+    const nextSupportId = updates.supportId !== undefined ? updates.supportId : commonSupportId;
+
+    if (updates.freq !== undefined) setCommonFreq(updates.freq);
+    if (updates.time !== undefined) setCommonTime(updates.time);
+    if (updates.days !== undefined) setCommonDays(updates.days);
+    if (updates.dayOfMonth !== undefined) setCommonDayOfMonth(updates.dayOfMonth);
+    if (updates.specificDate !== undefined) setCommonSpecificDate(updates.specificDate);
+    if (updates.target !== undefined) setCommonTarget(updates.target);
+    if (updates.supportId !== undefined) setCommonSupportId(updates.supportId);
+
+    // Propagate changes to rooms that inherit default (isCustomized !== true)
+    setConfigs(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(taskId => {
+        if (next[taskId]) {
+          const roomsMap = { ...next[taskId] };
+          Object.keys(roomsMap).forEach(roomId => {
+            const item = roomsMap[roomId];
+            if (item && item.selected && item.status !== 'ALREADY_ACTIVE' && !item.isCustomized) {
+              roomsMap[roomId] = {
+                ...item,
+                frequency: nextFreq,
+                preferredTime: nextTime,
+                preferredDays: nextDays,
+                dayOfMonth: nextDom,
+                specificDate: nextDate,
+                executionTarget: nextTarget,
+                domesticSupportId: nextTarget === 'HOUSEHOLD' ? null : nextSupportId
+              };
+            }
+          });
+          next[taskId] = roomsMap;
+        }
+      });
+      return next;
+    });
+  };
 
   // Toggle room selection in Step 1
   const handleToggleRoom = (taskId: string, roomId: string) => {
@@ -207,7 +272,7 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     setValidationError(null);
   };
 
-  // Update room config in Step 2
+  // Update room config in Step 2 (automatically marks room as customized)
   const handleUpdateRoomConfig = (
     taskId: string,
     roomId: string,
@@ -224,7 +289,8 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
           ...taskConfigs,
           [roomId]: {
             ...current,
-            ...partial
+            ...partial,
+            isCustomized: partial.isCustomized !== undefined ? partial.isCustomized : true
           }
         }
       };
@@ -232,16 +298,107 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     setValidationError(null);
   };
 
-  // Toggle weekly day
+  // Toggle weekly/biweekly day for individual room
   const handleToggleDay = (taskId: string, roomId: string, day: number) => {
     const current = configs[taskId]?.[roomId]?.preferredDays || [];
     const next = current.includes(day)
       ? current.filter(d => d !== day)
       : [...current, day].sort((a, b) => a - b);
-    handleUpdateRoomConfig(taskId, roomId, { preferredDays: next });
+    handleUpdateRoomConfig(taskId, roomId, { preferredDays: next, isCustomized: true });
   };
 
-  // Apply common config to all selected combinations in Step 2
+  // Toggle customize view expansion for room card
+  const handleToggleCustomize = (taskId: string, roomId: string) => {
+    setConfigs(prev => {
+      const taskConfigs = prev[taskId];
+      if (!taskConfigs || !taskConfigs[roomId]) return prev;
+      const current = taskConfigs[roomId];
+      const nextExpanded = !current.isExpanded;
+
+      return {
+        ...prev,
+        [taskId]: {
+          ...taskConfigs,
+          [roomId]: {
+            ...current,
+            isExpanded: nextExpanded,
+            isCustomized: nextExpanded ? true : current.isCustomized
+          }
+        }
+      };
+    });
+  };
+
+  // Request reset to default (prompts confirmation)
+  const handleRequestResetToDefault = (taskId: string, roomId: string) => {
+    setConfigs(prev => {
+      const taskConfigs = prev[taskId];
+      if (!taskConfigs || !taskConfigs[roomId]) return prev;
+      const current = taskConfigs[roomId];
+
+      return {
+        ...prev,
+        [taskId]: {
+          ...taskConfigs,
+          [roomId]: {
+            ...current,
+            confirmingReset: true
+          }
+        }
+      };
+    });
+  };
+
+  // Cancel reset to default
+  const handleCancelResetToDefault = (taskId: string, roomId: string) => {
+    setConfigs(prev => {
+      const taskConfigs = prev[taskId];
+      if (!taskConfigs || !taskConfigs[roomId]) return prev;
+      const current = taskConfigs[roomId];
+
+      return {
+        ...prev,
+        [taskId]: {
+          ...taskConfigs,
+          [roomId]: {
+            ...current,
+            confirmingReset: false
+          }
+        }
+      };
+    });
+  };
+
+  // Confirm reset to default
+  const handleConfirmResetToDefault = (taskId: string, roomId: string) => {
+    setConfigs(prev => {
+      const taskConfigs = prev[taskId];
+      if (!taskConfigs || !taskConfigs[roomId]) return prev;
+      const current = taskConfigs[roomId];
+
+      return {
+        ...prev,
+        [taskId]: {
+          ...taskConfigs,
+          [roomId]: {
+            ...current,
+            frequency: commonFreq,
+            preferredTime: commonTime,
+            preferredDays: commonDays,
+            dayOfMonth: commonDayOfMonth,
+            specificDate: commonSpecificDate,
+            executionTarget: commonTarget,
+            domesticSupportId: commonTarget === 'HOUSEHOLD' ? null : commonSupportId,
+            isCustomized: false,
+            isExpanded: false,
+            confirmingReset: false
+          }
+        }
+      };
+    });
+  };
+
+  // Apply common config to all selected combinations in Step 2 (only non-customized)
   const handleApplyCommonConfig = () => {
     setConfigs(prev => {
       const next = { ...prev };
@@ -249,11 +406,15 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
         if (next[taskId]) {
           const roomsMap = { ...next[taskId] };
           Object.keys(roomsMap).forEach(roomId => {
-            if (roomsMap[roomId].selected && roomsMap[roomId].status !== 'ALREADY_ACTIVE') {
+            const item = roomsMap[roomId];
+            if (item && item.selected && item.status !== 'ALREADY_ACTIVE' && !item.isCustomized) {
               roomsMap[roomId] = {
-                ...roomsMap[roomId],
+                ...item,
                 frequency: commonFreq,
                 preferredTime: commonTime,
+                preferredDays: commonDays,
+                dayOfMonth: commonDayOfMonth,
+                specificDate: commonSpecificDate,
                 executionTarget: commonTarget,
                 domesticSupportId: commonTarget === 'HOUSEHOLD' ? null : commonSupportId
               };
@@ -337,12 +498,23 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
   const handleProceedToStep3 = () => {
     for (const op of selectedCombinations) {
       const { task, room, config } = op;
-      if (config.frequency === 'WEEKLY' && (!config.preferredDays || config.preferredDays.length === 0)) {
-        setValidationError(`A tarefa "${task.name}" no ambiente "${room.name}" é semanal e requer ao menos um dia da semana.`);
+      if (
+        (config.frequency === 'WEEKLY' || config.frequency === 'BIWEEKLY') &&
+        (!config.preferredDays || config.preferredDays.length === 0)
+      ) {
+        setValidationError(
+          `A tarefa "${task.name}" no ambiente "${room.name}" é ${
+            config.frequency === 'WEEKLY' ? 'semanal' : 'quinzenal'
+          } e requer ao menos um dia da semana.`
+        );
         return;
       }
       if (config.frequency === 'MONTHLY' && (config.dayOfMonth < 1 || config.dayOfMonth > 31)) {
         setValidationError(`A tarefa "${task.name}" no ambiente "${room.name}" é mensal e requer um dia do mês válido (1 a 31).`);
+        return;
+      }
+      if (config.frequency === 'ONE_TIME' && !config.specificDate) {
+        setValidationError(`A tarefa "${task.name}" no ambiente "${room.name}" é pontual e requer uma data de execução.`);
         return;
       }
       if (config.executionTarget === 'EXTERNAL_SUPPORT') {
@@ -377,8 +549,9 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
         category: task.category,
         roomId: room.id,
         frequency: config.frequency,
-        preferredDays: config.frequency === 'WEEKLY' ? config.preferredDays : undefined,
+        preferredDays: (config.frequency === 'WEEKLY' || config.frequency === 'BIWEEKLY') ? config.preferredDays : undefined,
         dayOfMonth: config.frequency === 'MONTHLY' ? config.dayOfMonth : undefined,
+        startDate: config.frequency === 'ONE_TIME' ? config.specificDate : undefined,
         preferredTime: config.preferredTime || '09:00',
         durationMinutes: task.duration_minutes || 20,
         effort: task.effort_level ? task.effort_level * 5 : 10,
@@ -390,7 +563,7 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     await onConfirm(payload);
   };
 
-  const formatFrequencyLabel = (freq: string, days?: number[], dom?: number) => {
+  const formatFrequencyLabel = (freq: string, days?: number[], dom?: number, specificDate?: string) => {
     switch (freq) {
       case 'DAILY':
         return 'Diária';
@@ -399,11 +572,13 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
         const dayNames = days.map(d => DAY_LABELS.find(l => l.day === d)?.label).filter(Boolean);
         return `Semanal (${dayNames.join(', ')})`;
       case 'BIWEEKLY':
-        return 'Quinzenal';
+        if (!days || days.length === 0) return 'Quinzenal';
+        const biweekNames = days.map(d => DAY_LABELS.find(l => l.day === d)?.label).filter(Boolean);
+        return `Quinzenal (${biweekNames.join(', ')})`;
       case 'MONTHLY':
         return `Mensal (dia ${dom || 1})`;
       case 'ONE_TIME':
-        return 'Pontual';
+        return specificDate ? `Pontual (${specificDate})` : 'Pontual';
       default:
         return freq;
     }
@@ -832,251 +1007,484 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* ETAPA 2: CONFIGURAR ROTINAS (Apenas combinações escolhidas) */}
+      {/* ETAPA 2: CONFIGURAR ROTINAS (Configuração Padrão + Personalização por Ambiente) */}
       {/* ========================================================================= */}
       {currentStep === 2 && (
         <div id="step-2-configure-routines" className="space-y-6">
-          {/* Toolbar de Configuração Comum */}
+          {/* Toolbar de Configuração Comum (HOTFIX B.5.4-HF1) */}
           <div
             id="multi-room-common-toolbar"
-            className="bg-surface-card border border-border-default rounded-2xl p-4 sm:p-5 shadow-xs space-y-3"
+            className="bg-surface-card border border-border-default rounded-3xl p-5 sm:p-6 shadow-xs space-y-4"
           >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-text-primary">
-                <Sparkles className="w-4 h-4 text-brand-primary" />
-                <span>Aplicar configuração comum aos ambientes selecionados:</span>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-default/60 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-brand-primary shrink-0" />
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-text-primary">
+                    Configuração Padrão para Ambientes
+                  </h3>
+                  <p className="text-xs text-text-secondary">
+                    Defina os valores padrão. Cada ambiente herda estas regras automaticamente e pode ser personalizado de forma independente.
+                  </p>
+                </div>
               </div>
-              <span className="text-[11px] text-text-muted">
-                Ajustes individuais continuam permitidos abaixo
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-brand-primary-soft text-brand-primary">
+                Herança Ativa
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <select
-                id="select-common-freq"
-                value={commonFreq}
-                onChange={e => setCommonFreq(e.target.value)}
-                className="bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
-                aria-label="Frequência comum"
-              >
-                <option value="DAILY">Diária</option>
-                <option value="WEEKLY">Semanal</option>
-                <option value="BIWEEKLY">Quinzenal</option>
-                <option value="MONTHLY">Mensal</option>
-                <option value="ONE_TIME">Pontual</option>
-              </select>
+            {/* Linha 1: Frequência e Horário Sugerido */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label
+                  htmlFor="select-common-freq"
+                  className="block text-xs font-semibold text-text-secondary mb-1"
+                >
+                  Frequência Padrão *
+                </label>
+                <select
+                  id="select-common-freq"
+                  value={commonFreq}
+                  onChange={e => updateCommonConfig({ freq: e.target.value })}
+                  className="w-full bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                  aria-label="Frequência comum"
+                >
+                  <option value="DAILY">Diária</option>
+                  <option value="WEEKLY">Semanal</option>
+                  <option value="BIWEEKLY">Quinzenal</option>
+                  <option value="MONTHLY">Mensal</option>
+                  <option value="ONE_TIME">Pontual</option>
+                </select>
+              </div>
 
-              <div className="flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-text-muted" />
+              <div>
+                <label
+                  htmlFor="input-common-time"
+                  className="block text-xs font-semibold text-text-secondary mb-1 flex items-center gap-1.5"
+                >
+                  <Clock className="w-3.5 h-3.5 text-text-muted" />
+                  <span>Horário Sugerido *</span>
+                </label>
                 <input
                   id="input-common-time"
                   type="time"
                   value={commonTime}
-                  onChange={e => setCommonTime(e.target.value)}
-                  className="bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                  onChange={e => updateCommonConfig({ time: e.target.value })}
+                  className="w-full bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
                   aria-label="Horário comum"
                 />
               </div>
-
-              <button
-                id="btn-apply-common-config"
-                type="button"
-                onClick={handleApplyCommonConfig}
-                className="min-h-[38px] px-4 py-2 bg-brand-primary-soft text-brand-primary hover:bg-brand-primary hover:text-text-on-primary rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
-              >
-                Aplicar aos selecionados
-              </button>
             </div>
 
-            {/* Responsible / Support toggle in common bar */}
-            <div className="pt-2 border-t border-border-default/40">
+            {/* Linha 2: Condicional por frequência (Dias da semana, Dia do mês, Data específica) */}
+            {(commonFreq === 'WEEKLY' || commonFreq === 'BIWEEKLY') && (
+              <div id="common-weekly-days" className="space-y-1.5 pt-1">
+                <span className="block text-xs font-semibold text-text-secondary">
+                  Dias da semana padrão {commonFreq === 'BIWEEKLY' ? '(quinzenal)' : ''} *
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {DAY_LABELS.map(({ day, label }) => {
+                    const isSelected = commonDays.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        id={`btn-common-day-${day}`}
+                        type="button"
+                        onClick={() => {
+                          const next = isSelected
+                            ? commonDays.filter(d => d !== day)
+                            : [...commonDays, day].sort((a, b) => a - b);
+                          updateCommonConfig({ days: next });
+                        }}
+                        className={`min-h-[38px] min-w-[44px] px-3 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-brand-primary text-text-on-primary shadow-2xs'
+                            : 'bg-surface-subtle text-text-secondary border border-border-default hover:bg-surface-card'
+                        }`}
+                        aria-label={`Padrão ${label}`}
+                        aria-pressed={isSelected}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {commonFreq === 'MONTHLY' && (
+              <div id="common-monthly-dom" className="flex items-center gap-2 pt-1">
+                <label htmlFor="input-common-dom" className="text-xs font-semibold text-text-secondary">
+                  Dia do mês padrão (1 a 31):
+                </label>
+                <input
+                  id="input-common-dom"
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={commonDayOfMonth}
+                  onChange={e =>
+                    updateCommonConfig({
+                      dayOfMonth: Math.max(1, Math.min(31, parseInt(e.target.value) || 1))
+                    })
+                  }
+                  className="w-24 bg-surface-subtle border border-border-default rounded-xl px-3 py-1.5 text-xs text-text-primary"
+                />
+              </div>
+            )}
+
+            {commonFreq === 'ONE_TIME' && (
+              <div id="common-specific-date" className="flex items-center gap-2 pt-1">
+                <label htmlFor="input-common-date" className="text-xs font-semibold text-text-secondary flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-text-muted" />
+                  <span>Data específica padrão:</span>
+                </label>
+                <input
+                  id="input-common-date"
+                  type="date"
+                  value={commonSpecificDate}
+                  onChange={e => updateCommonConfig({ specificDate: e.target.value })}
+                  className="bg-surface-subtle border border-border-default rounded-xl px-3 py-1.5 text-xs text-text-primary"
+                />
+              </div>
+            )}
+
+            {/* Linha 3: Público de Execução Comum */}
+            <div className="pt-2 border-t border-border-default/60">
               <button
                 type="button"
                 onClick={() => setShowCommonTargetDropdown(prev => !prev)}
                 className="text-xs font-semibold text-brand-primary flex items-center gap-1.5 hover:underline cursor-pointer"
               >
                 <Users className="w-3.5 h-3.5" />
-                <span>Definir público de execução comum</span>
+                <span>
+                  Definir público de execução padrão: <strong>{commonTarget === 'HOUSEHOLD' ? 'Pessoas da casa' : commonTarget === 'EXTERNAL_SUPPORT' ? 'Ajuda externa' : 'Flexível'}</strong>
+                </span>
                 {showCommonTargetDropdown ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
               </button>
 
               {showCommonTargetDropdown && (
-                <div className="mt-3 pt-2 border-t border-border-default/40">
+                <div id="common-target-selector" className="mt-3 pt-3 border-t border-border-default/40">
                   <ExecutionTargetSelector
                     executionTarget={commonTarget}
                     domesticSupportId={commonSupportId}
                     onChange={(target, supportId) => {
-                      setCommonTarget(target);
-                      setCommonSupportId(target === 'HOUSEHOLD' ? null : supportId);
+                      updateCommonConfig({ target, supportId: target === 'HOUSEHOLD' ? null : supportId });
                     }}
                     activeSupports={activeSupports}
                   />
                 </div>
               )}
             </div>
+
+            {/* Ação de reaplicação opcional para compatibilidade */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-[11px] text-text-muted">
+              <span>Ambientes com status "Padrão" herdam alterações em tempo real.</span>
+              <button
+                id="btn-apply-common-config"
+                type="button"
+                onClick={handleApplyCommonConfig}
+                className="text-xs font-semibold text-brand-primary hover:underline cursor-pointer"
+              >
+                Reaplicar a todos os não personalizados
+              </button>
+            </div>
           </div>
 
-          {/* Cards: Only Selected Combinations (Requisito 3 da B.5.4) */}
+          {/* Cards de Ambientes Selecionados (Cards Compactos + Personalização) */}
           <div id="multi-room-selected-list" className="space-y-4">
             {selectedCombinations.map((op, idx) => {
               const { task, room, config } = op;
+              const isCustomized = Boolean(config.isCustomized);
+              const isExpanded = Boolean(config.isExpanded);
               const catInfo = taskCategoryLabels[task.category] || { label: task.category, icon: '📋' };
+
+              // Resumo formatado da rotina no card compacto
+              const freqSummary = formatFrequencyLabel(
+                config.frequency,
+                config.preferredDays,
+                config.dayOfMonth,
+                config.specificDate
+              );
+              const targetSummary =
+                config.executionTarget === 'HOUSEHOLD'
+                  ? 'Pessoas da casa'
+                  : config.executionTarget === 'EXTERNAL_SUPPORT'
+                  ? `Ajuda externa (${activeSupports.find(s => s.id === config.domesticSupportId)?.name || 'Profissional'})`
+                  : 'Flexível';
 
               return (
                 <div
                   key={`${task.id}-${room.id}-${idx}`}
                   id={`config-card-${task.id}-${room.id}`}
-                  className="bg-surface-card border border-border-default rounded-3xl p-4 sm:p-6 shadow-xs space-y-4"
+                  className={`bg-surface-card border rounded-3xl p-4 sm:p-5 shadow-xs transition-all ${
+                    isCustomized
+                      ? 'border-brand-primary/40 bg-surface-card'
+                      : 'border-border-default bg-surface-card'
+                  }`}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-default/60 pb-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl" role="img" aria-label={catInfo.label}>
+                  {/* Card Compacto: Cabeçalho, Resumo, Indicador e Botão Personalizar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span className="text-xl shrink-0 mt-0.5" role="img" aria-label={catInfo.label}>
                         {catInfo.icon}
                       </span>
-                      <div>
-                        <h3 className="font-bold text-sm sm:text-base text-text-primary">
-                          {task.name}
-                        </h3>
-                        <p className="text-xs text-text-muted">
-                          Ambiente: <strong className="text-brand-primary">{room.name}</strong> • {catInfo.label}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-bold text-sm sm:text-base text-text-primary truncate">
+                            {task.name}
+                          </h3>
+                          <span className="text-text-muted">•</span>
+                          <span className="font-semibold text-brand-primary text-xs sm:text-sm truncate">
+                            {room.name}
+                          </span>
+                        </div>
+
+                        {/* Resumo compacto legível */}
+                        <p id={`summary-text-${task.id}-${room.id}`} className="text-xs text-text-secondary mt-1">
+                          <strong>{freqSummary}</strong> às <strong>{config.preferredTime}</strong> • {targetSummary}
                         </p>
                       </div>
                     </div>
 
-                    <div>
-                      {op.action === 'REACTIVATE' ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-state-warning-soft text-state-warning border border-state-warning/30">
-                          <RotateCcw className="w-3 h-3" />
-                          <span>Reativar rotina arquivada</span>
+                    {/* Lado direito: Selo Padrão/Personalizado + Botão Personalizar */}
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                      {isCustomized ? (
+                        <span
+                          id={`badge-status-customized-${task.id}-${room.id}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-state-warning-soft text-state-warning border border-state-warning/30"
+                        >
+                          <span>Personalizado</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-state-success-soft text-state-success border border-state-success/30">
-                          <Sparkles className="w-3 h-3" />
-                          <span>Nova rotina</span>
+                        <span
+                          id={`badge-status-default-${task.id}-${room.id}`}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full bg-surface-subtle text-text-secondary border border-border-default"
+                        >
+                          <span>Padrão</span>
                         </span>
                       )}
+
+                      <button
+                        id={`btn-customize-${task.id}-${room.id}`}
+                        type="button"
+                        onClick={() => handleToggleCustomize(task.id, room.id)}
+                        className="min-h-[36px] px-3 py-1.5 bg-surface-subtle hover:bg-surface-card border border-border-default rounded-xl text-xs font-bold text-text-primary flex items-center gap-1.5 transition-colors cursor-pointer"
+                        aria-expanded={isExpanded}
+                      >
+                        <Settings className="w-3.5 h-3.5 text-brand-primary" />
+                        <span>{isExpanded ? 'Ocultar personalização' : 'Personalizar'}</span>
+                      </button>
                     </div>
                   </div>
 
-                  {/* Independent Configuration Fields */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                    {/* Frequency */}
-                    <div>
-                      <label
-                        htmlFor={`freq-${task.id}-${room.id}`}
-                        className="block text-xs font-semibold text-text-secondary mb-1"
-                      >
-                        Frequência *
-                      </label>
-                      <select
-                        id={`freq-${task.id}-${room.id}`}
-                        value={config.frequency}
-                        onChange={e =>
-                          handleUpdateRoomConfig(task.id, room.id, { frequency: e.target.value })
-                        }
-                        className="w-full bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
-                        aria-label={`Frequência para ${task.name} em ${room.name}`}
-                      >
-                        <option value="DAILY">Diária</option>
-                        <option value="WEEKLY">Semanal</option>
-                        <option value="BIWEEKLY">Quinzenal</option>
-                        <option value="MONTHLY">Mensal</option>
-                        <option value="ONE_TIME">Pontual</option>
-                      </select>
-                    </div>
-
-                    {/* Time */}
-                    <div>
-                      <label
-                        htmlFor={`time-${task.id}-${room.id}`}
-                        className="block text-xs font-semibold text-text-secondary mb-1 flex items-center gap-1.5"
-                      >
-                        <Clock className="w-3.5 h-3.5 text-text-muted" />
-                        <span>Horário *</span>
-                      </label>
-                      <input
-                        id={`time-${task.id}-${room.id}`}
-                        type="time"
-                        value={config.preferredTime}
-                        onChange={e =>
-                          handleUpdateRoomConfig(task.id, room.id, { preferredTime: e.target.value })
-                        }
-                        className="w-full bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
-                        aria-label={`Horário para ${task.name} em ${room.name}`}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Weekly Days selector */}
-                  {config.frequency === 'WEEKLY' && (
-                    <div>
-                      <span className="block text-xs font-semibold text-text-secondary mb-1.5">
-                        Dias da semana *
+                  {/* Painel Expansível: Configuração Individual */}
+                  <div
+                    id={`customize-panel-${task.id}-${room.id}`}
+                    className={`mt-4 pt-4 border-t border-border-default/60 space-y-4 ${
+                      isExpanded ? 'block animate-in fade-in-50 duration-150' : 'hidden'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-text-primary flex items-center gap-1.5">
+                        <Settings className="w-3.5 h-3.5 text-brand-primary" />
+                        <span>Campos individuais para {room.name}:</span>
                       </span>
-                      <div className="flex flex-wrap gap-2">
-                        {DAY_LABELS.map(({ day, label }) => {
-                          const isDaySelected = config.preferredDays?.includes(day);
-                          return (
-                            <button
-                              key={day}
-                              id={`btn-day-${task.id}-${room.id}-${day}`}
-                              type="button"
-                              onClick={() => handleToggleDay(task.id, room.id, day)}
-                              className={`min-h-[38px] min-w-[44px] px-3 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer ${
-                                isDaySelected
-                                  ? 'bg-brand-primary text-text-on-primary shadow-2xs'
-                                  : 'bg-surface-subtle text-text-secondary border border-border-default hover:bg-surface-card'
-                              }`}
-                              aria-label={`${label} para ${task.name} em ${room.name}`}
-                              aria-pressed={isDaySelected}
+
+                      {/* Ação "Usar configuração padrão" com solicitação de confirmação */}
+                      {isCustomized && (
+                        <div>
+                          {config.confirmingReset ? (
+                            <div
+                              id={`confirm-reset-box-${task.id}-${room.id}`}
+                              className="flex items-center gap-2 p-1.5 bg-state-warning-soft border border-state-warning/40 rounded-xl text-xs"
                             >
-                              {label}
+                              <span className="text-state-warning font-semibold pl-1">Restaurar padrão?</span>
+                              <button
+                                id={`btn-confirm-reset-${task.id}-${room.id}`}
+                                type="button"
+                                onClick={() => handleConfirmResetToDefault(task.id, room.id)}
+                                className="px-2 py-1 bg-state-warning text-white rounded-lg font-bold text-[11px] hover:bg-state-warning-hover transition cursor-pointer"
+                              >
+                                Confirmar
+                              </button>
+                              <button
+                                id={`btn-cancel-reset-${task.id}-${room.id}`}
+                                type="button"
+                                onClick={() => handleCancelResetToDefault(task.id, room.id)}
+                                className="px-2 py-1 bg-surface-card text-text-secondary rounded-lg font-semibold text-[11px] hover:bg-surface-subtle transition cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              id={`btn-reset-default-${task.id}-${room.id}`}
+                              type="button"
+                              onClick={() => handleRequestResetToDefault(task.id, room.id)}
+                              className="text-xs font-semibold text-brand-primary hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>Usar configuração padrão</span>
                             </button>
-                          );
-                        })}
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Campos de formulário individual */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                      {/* Frequência */}
+                      <div>
+                        <label
+                          htmlFor={`freq-${task.id}-${room.id}`}
+                          className="block text-xs font-semibold text-text-secondary mb-1"
+                        >
+                          Frequência *
+                        </label>
+                        <select
+                          id={`freq-${task.id}-${room.id}`}
+                          value={config.frequency}
+                          onChange={e =>
+                            handleUpdateRoomConfig(task.id, room.id, {
+                              frequency: e.target.value,
+                              isCustomized: true
+                            })
+                          }
+                          className="w-full bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                          aria-label={`Frequência para ${task.name} em ${room.name}`}
+                        >
+                          <option value="DAILY">Diária</option>
+                          <option value="WEEKLY">Semanal</option>
+                          <option value="BIWEEKLY">Quinzenal</option>
+                          <option value="MONTHLY">Mensal</option>
+                          <option value="ONE_TIME">Pontual</option>
+                        </select>
+                      </div>
+
+                      {/* Horário */}
+                      <div>
+                        <label
+                          htmlFor={`time-${task.id}-${room.id}`}
+                          className="block text-xs font-semibold text-text-secondary mb-1 flex items-center gap-1.5"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-text-muted" />
+                          <span>Horário *</span>
+                        </label>
+                        <input
+                          id={`time-${task.id}-${room.id}`}
+                          type="time"
+                          value={config.preferredTime}
+                          onChange={e =>
+                            handleUpdateRoomConfig(task.id, room.id, {
+                              preferredTime: e.target.value,
+                              isCustomized: true
+                            })
+                          }
+                          className="w-full bg-surface-subtle border border-border-default rounded-xl px-3 py-2 text-xs sm:text-sm text-text-primary focus:ring-2 focus:ring-brand-primary focus:outline-none"
+                          aria-label={`Horário para ${task.name} em ${room.name}`}
+                        />
                       </div>
                     </div>
-                  )}
 
-                  {/* Monthly day of month */}
-                  {config.frequency === 'MONTHLY' && (
-                    <div className="flex items-center gap-2">
-                      <label
-                        htmlFor={`dom-${task.id}-${room.id}`}
-                        className="text-xs font-medium text-text-secondary"
-                      >
-                        Dia do mês (1 a 31):
-                      </label>
-                      <input
-                        id={`dom-${task.id}-${room.id}`}
-                        type="number"
-                        min={1}
-                        max={31}
-                        value={config.dayOfMonth || 1}
-                        onChange={e =>
+                    {/* Dias da semana (Semanal ou Quinzenal) */}
+                    {(config.frequency === 'WEEKLY' || config.frequency === 'BIWEEKLY') && (
+                      <div>
+                        <span className="block text-xs font-semibold text-text-secondary mb-1.5">
+                          Dias da semana {config.frequency === 'BIWEEKLY' ? '(quinzenal)' : ''} *
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {DAY_LABELS.map(({ day, label }) => {
+                            const isDaySelected = config.preferredDays?.includes(day);
+                            return (
+                              <button
+                                key={day}
+                                id={`btn-day-${task.id}-${room.id}-${day}`}
+                                type="button"
+                                onClick={() => handleToggleDay(task.id, room.id, day)}
+                                className={`min-h-[38px] min-w-[44px] px-3 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer ${
+                                  isDaySelected
+                                    ? 'bg-brand-primary text-text-on-primary shadow-2xs'
+                                    : 'bg-surface-subtle text-text-secondary border border-border-default hover:bg-surface-card'
+                                }`}
+                                aria-label={`${label} para ${task.name} em ${room.name}`}
+                                aria-pressed={isDaySelected}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Dia do mês (Mensal) */}
+                    {config.frequency === 'MONTHLY' && (
+                      <div className="flex items-center gap-2">
+                        <label
+                          htmlFor={`dom-${task.id}-${room.id}`}
+                          className="text-xs font-medium text-text-secondary"
+                        >
+                          Dia do mês (1 a 31):
+                        </label>
+                        <input
+                          id={`dom-${task.id}-${room.id}`}
+                          type="number"
+                          min={1}
+                          max={31}
+                          value={config.dayOfMonth || 1}
+                          onChange={e =>
+                            handleUpdateRoomConfig(task.id, room.id, {
+                              dayOfMonth: Math.max(1, Math.min(31, parseInt(e.target.value) || 1)),
+                              isCustomized: true
+                            })
+                          }
+                          className="w-24 bg-surface-subtle border border-border-default rounded-xl px-3 py-1.5 text-xs text-text-primary"
+                        />
+                      </div>
+                    )}
+
+                    {/* Data específica (Pontual) */}
+                    {config.frequency === 'ONE_TIME' && (
+                      <div className="flex items-center gap-2">
+                        <label
+                          htmlFor={`date-${task.id}-${room.id}`}
+                          className="text-xs font-medium text-text-secondary flex items-center gap-1.5"
+                        >
+                          <Calendar className="w-3.5 h-3.5 text-text-muted" />
+                          <span>Data de execução:</span>
+                        </label>
+                        <input
+                          id={`date-${task.id}-${room.id}`}
+                          type="date"
+                          value={config.specificDate || ''}
+                          onChange={e =>
+                            handleUpdateRoomConfig(task.id, room.id, {
+                              specificDate: e.target.value,
+                              isCustomized: true
+                            })
+                          }
+                          className="bg-surface-subtle border border-border-default rounded-xl px-3 py-1.5 text-xs text-text-primary"
+                        />
+                      </div>
+                    )}
+
+                    {/* Seletor de Público Executor */}
+                    <div className="pt-2 border-t border-border-default/60">
+                      <ExecutionTargetSelector
+                        executionTarget={config.executionTarget || 'HOUSEHOLD'}
+                        domesticSupportId={config.domesticSupportId}
+                        onChange={(target, supportId) => {
                           handleUpdateRoomConfig(task.id, room.id, {
-                            dayOfMonth: Math.max(1, Math.min(31, parseInt(e.target.value) || 1))
-                          })
-                        }
-                        className="w-24 bg-surface-subtle border border-border-default rounded-xl px-3 py-1.5 text-xs text-text-primary"
+                            executionTarget: target,
+                            domesticSupportId: target === 'HOUSEHOLD' ? null : supportId,
+                            isCustomized: true
+                          });
+                        }}
+                        activeSupports={activeSupports}
+                        disabled={isSubmitting}
                       />
                     </div>
-                  )}
-
-                  {/* Execution Target Selector */}
-                  <div className="pt-2 border-t border-border-default/60">
-                    <ExecutionTargetSelector
-                      executionTarget={config.executionTarget || 'HOUSEHOLD'}
-                      domesticSupportId={config.domesticSupportId}
-                      onChange={(target, supportId) => {
-                        handleUpdateRoomConfig(task.id, room.id, {
-                          executionTarget: target,
-                          domesticSupportId: target === 'HOUSEHOLD' ? null : supportId
-                        });
-                      }}
-                      activeSupports={activeSupports}
-                      disabled={isSubmitting}
-                    />
                   </div>
                 </div>
               );
