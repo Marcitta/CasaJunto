@@ -25,6 +25,7 @@ import { BatchConfigurationModal } from './BatchConfigurationModal';
 import { BatchRemoveModal } from './BatchRemoveModal';
 import { EditFamilyTaskModal } from './EditFamilyTaskModal';
 import { AddRoutineToRoomModal } from './AddRoutineToRoomModal';
+import { TaskMultiRoomSetupView } from './TaskMultiRoomSetupView';
 import { formatExecutionTargetDisplay } from '../services/domesticSupportService';
 
 export const TaskCatalogView: React.FC = () => {
@@ -68,6 +69,10 @@ export const TaskCatalogView: React.FC = () => {
   // Multiambiente Modal State (Fase B.5.2)
   const [isAddRoomModalOpen, setIsAddRoomModalOpen] = useState(false);
   const [taskForAddRoom, setTaskForAddRoom] = useState<TaskMaster | null>(null);
+
+  // Dedicated Multi-room Screen State (Fase B.5.4)
+  const [viewMode, setViewMode] = useState<'catalog' | 'multi_room_setup'>('catalog');
+  const [multiRoomTasks, setMultiRoomTasks] = useState<TaskMaster[]>([]);
 
   // Submitting / Loading State
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -274,11 +279,13 @@ export const TaskCatalogView: React.FC = () => {
     setSelectedTaskIds(new Set());
   };
 
-  // Open batch add configuration (Fase B.5.3: permite configurar qualquer tarefa selecionada em multiambiente)
-  const handleOpenBatchConfig = () => {
-    if (!isAdmin || selectedTasksList.length === 0) return;
-    setTasksForConfig(selectedTasksList);
-    setIsConfigModalOpen(true);
+  // Open batch add configuration (Fase B.5.4: abre tela dedicada de configuração multiambiente)
+  const handleOpenBatchConfig = (tasksToConfig?: unknown) => {
+    const list = Array.isArray(tasksToConfig) ? tasksToConfig : selectedTasksList;
+    if (!isAdmin || list.length === 0) return;
+    setMultiRoomTasks(list);
+    setTasksForConfig(list);
+    setViewMode('multi_room_setup');
   };
 
   // Open batch remove confirmation
@@ -421,6 +428,28 @@ export const TaskCatalogView: React.FC = () => {
 
   const activeFiltersCount = (selectedCategory !== 'all' ? 1 : 0) + (selectedRoomType !== 'all' ? 1 : 0);
   const hasActiveFilters = activeFiltersCount > 0;
+
+  // Fase B.5.4: Renderiza Tela Dedicada Multiambiente na área principal
+  if (viewMode === 'multi_room_setup' && multiRoomTasks.length > 0) {
+    return (
+      <TaskMultiRoomSetupView
+        tasks={multiRoomTasks}
+        rooms={rooms || []}
+        familyTasks={familyTasks || []}
+        domesticSupports={domesticSupports || []}
+        onBackToCatalog={() => {
+          setViewMode('catalog');
+          setMultiRoomTasks([]);
+        }}
+        onConfirm={async (configs) => {
+          await handleConfirmBatchAdd(configs);
+          setViewMode('catalog');
+          setMultiRoomTasks([]);
+        }}
+        isSubmitting={isSubmitting}
+      />
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 w-full max-w-7xl mx-auto space-y-4 pb-28">
@@ -986,8 +1015,7 @@ export const TaskCatalogView: React.FC = () => {
                                 type="button"
                                 onClick={() => {
                                   setOpenMenuTaskId(null);
-                                  setTasksForConfig([task]);
-                                  setIsConfigModalOpen(true);
+                                  handleOpenBatchConfig([task]);
                                 }}
                                 className="w-full text-left px-2.5 py-1.5 text-xs font-semibold text-brand-primary hover:bg-brand-primary-soft rounded-lg flex items-center gap-2 transition-colors cursor-pointer border-b border-border-default/60 mb-1 pb-1.5"
                               >

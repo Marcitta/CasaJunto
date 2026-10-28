@@ -76,6 +76,7 @@ import { runTaskCatalogMultiRoomPhaseB52TestSuite } from './taskCatalogMultiRoom
 import { runTaskCatalogMultiRoomPhaseB53TestSuite } from './taskCatalogMultiRoomPhaseB53.test';
 import { runTaskCatalogMultiRoomInteractiveTests } from './taskCatalogMultiRoomInteractiveB53Hf1.test';
 import { runTaskCatalogMultiRoomLayoutHF2Tests } from './taskCatalogMultiRoomLayoutB53Hf2.test';
+import { runTaskMultiRoomDedicatedViewB54TestSuite } from './taskMultiRoomDedicatedViewB54.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1126,6 +1127,20 @@ for (const r of hf1InteractiveResults) {
 console.log('\n--- GRUPO 78: FASE B.5.3-HF2: TESTES DE LAYOUT DE COLUNA ÚNICA MULTIAMBIENTE (HF2-01 - HF2-10) ---');
 const hf2LayoutResults = runTaskCatalogMultiRoomLayoutHF2Tests();
 for (const r of hf2LayoutResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 79. CASA JUNTO — FASE B.5.4: TELA DEDICADA DE CONFIGURAÇÃO MULTIAMBIENTE (12 TESTES: B54-01 - B54-12)
+console.log('\n--- GRUPO 79: FASE B.5.4: TELA DEDICADA DE CONFIGURAÇÃO MULTIAMBIENTE (B54-01 - B54-12) ---');
+const b54Results = runTaskMultiRoomDedicatedViewB54TestSuite();
+for (const r of b54Results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
