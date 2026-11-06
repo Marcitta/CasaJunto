@@ -11,6 +11,40 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-    strictPort: true
+    strictPort: true,
+    hmr: process.env.DISABLE_HMR !== 'true',
+    watch: {
+      ignored: [
+        '**/functions/**',
+        '**/scripts/**',
+        '**/src/tests/**',
+        '**/public/**',
+        '**/dist/**',
+        '**/.git/**'
+      ]
+    }
+  },
+  optimizeDeps: {
+    entries: ['index.html'],
+    noDiscovery: true,
+    holdUntilCrawlEnd: false,
+    include: [
+      'react',
+      'react-dom',
+      'react-dom/client',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
+      'lucide-react',
+      'firebase/app',
+      'firebase/auth',
+      'firebase/firestore',
+      'firebase/messaging',
+      'canvas-confetti'
+    ],
+    exclude: ['firebase-admin', 'firebase-functions', 'jsdom'],
+    esbuildOptions: {
+      sourcemap: false
+    }
   }
 });
+

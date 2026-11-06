@@ -180,17 +180,40 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
   const [configs, setConfigs] = useState<Record<string, Record<string, RoomConfigItem>>>(initialConfigs);
 
   // Common Configuration Toolbar State (Etapa 2)
-  const [commonFreq, setCommonFreq] = useState<string>('DAILY');
-  const [commonTime, setCommonTime] = useState<string>('09:00');
-  const [commonDays, setCommonDays] = useState<number[]>([1]);
-  const [commonDayOfMonth, setCommonDayOfMonth] = useState<number>(1);
-  const [commonSpecificDate, setCommonSpecificDate] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
-  });
-  const [commonTarget, setCommonTarget] = useState<ExecutionTarget>('HOUSEHOLD');
-  const [commonSupportId, setCommonSupportId] = useState<string | null>(null);
+  const [commonConfig, setCommonConfig] = useState<{
+    frequency: string;
+    preferredTime: string;
+    preferredDays: number[];
+    dayOfMonth: number;
+    specificDate: string;
+    executionTarget: ExecutionTarget;
+    domesticSupportId: string | null;
+  }>(() => ({
+    frequency: 'DAILY',
+    preferredTime: '09:00',
+    preferredDays: [1],
+    dayOfMonth: 1,
+    specificDate: (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      return d.toISOString().split('T')[0];
+    })(),
+    executionTarget: 'HOUSEHOLD',
+    domesticSupportId: null
+  }));
+
+  // Synchronous ref to prevent stale closures during multiple dispatches / event batches
+  const commonConfigRef = React.useRef(commonConfig);
+  commonConfigRef.current = commonConfig;
+
+  const commonFreq = commonConfig.frequency;
+  const commonTime = commonConfig.preferredTime;
+  const commonDays = commonConfig.preferredDays;
+  const commonDayOfMonth = commonConfig.dayOfMonth;
+  const commonSpecificDate = commonConfig.specificDate;
+  const commonTarget = commonConfig.executionTarget;
+  const commonSupportId = commonConfig.domesticSupportId;
+
   const [showCommonTargetDropdown, setShowCommonTargetDropdown] = useState<boolean>(false);
 
   // Validation & feedback state
@@ -206,46 +229,84 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     target?: ExecutionTarget;
     supportId?: string | null;
   }) => {
-    const nextFreq = updates.freq !== undefined ? updates.freq : commonFreq;
-    const nextTime = updates.time !== undefined ? updates.time : commonTime;
-    const nextDays = updates.days !== undefined ? updates.days : commonDays;
-    const nextDom = updates.dayOfMonth !== undefined ? updates.dayOfMonth : commonDayOfMonth;
-    const nextDate = updates.specificDate !== undefined ? updates.specificDate : commonSpecificDate;
-    const nextTarget = updates.target !== undefined ? updates.target : commonTarget;
-    const nextSupportId = updates.supportId !== undefined ? updates.supportId : commonSupportId;
+    setCommonConfig(prev => {
+      const next = {
+        frequency: updates.freq !== undefined ? updates.freq : prev.frequency,
+        preferredTime: updates.time !== undefined ? updates.time : prev.preferredTime,
+        preferredDays: updates.days !== undefined ? [...updates.days] : [...prev.preferredDays],
+        dayOfMonth: updates.dayOfMonth !== undefined ? updates.dayOfMonth : prev.dayOfMonth,
+        specificDate: updates.specificDate !== undefined ? updates.specificDate : prev.specificDate,
+        executionTarget: updates.target !== undefined ? updates.target : prev.executionTarget,
+        domesticSupportId: updates.supportId !== undefined ? updates.supportId : prev.domesticSupportId
+      };
+      commonConfigRef.current = next;
 
-    if (updates.freq !== undefined) setCommonFreq(updates.freq);
-    if (updates.time !== undefined) setCommonTime(updates.time);
-    if (updates.days !== undefined) setCommonDays(updates.days);
-    if (updates.dayOfMonth !== undefined) setCommonDayOfMonth(updates.dayOfMonth);
-    if (updates.specificDate !== undefined) setCommonSpecificDate(updates.specificDate);
-    if (updates.target !== undefined) setCommonTarget(updates.target);
-    if (updates.supportId !== undefined) setCommonSupportId(updates.supportId);
-
-    // Propagate changes to rooms that inherit default (isCustomized !== true)
-    setConfigs(prev => {
-      const next = { ...prev };
-      Object.keys(next).forEach(taskId => {
-        if (next[taskId]) {
-          const roomsMap = { ...next[taskId] };
-          Object.keys(roomsMap).forEach(roomId => {
-            const item = roomsMap[roomId];
-            if (item && item.selected && item.status !== 'ALREADY_ACTIVE' && !item.isCustomized) {
-              roomsMap[roomId] = {
-                ...item,
-                frequency: nextFreq,
-                preferredTime: nextTime,
-                preferredDays: nextDays,
-                dayOfMonth: nextDom,
-                specificDate: nextDate,
-                executionTarget: nextTarget,
-                domesticSupportId: nextTarget === 'HOUSEHOLD' ? null : nextSupportId
-              };
-            }
-          });
-          next[taskId] = roomsMap;
-        }
+      // Propagate changes immutably to rooms that inherit default (isCustomized !== true)
+      setConfigs(prevConfigs => {
+        const nextConfigs = { ...prevConfigs };
+        Object.keys(nextConfigs).forEach(taskId => {
+          if (nextConfigs[taskId]) {
+            const roomsMap = { ...nextConfigs[taskId] };
+            Object.keys(roomsMap).forEach(roomId => {
+              const item = roomsMap[roomId];
+              if (item && item.selected && item.status !== 'ALREADY_ACTIVE' && !item.isCustomized) {
+                roomsMap[roomId] = {
+                  ...item,
+                  frequency: next.frequency,
+                  preferredTime: next.preferredTime,
+                  preferredDays: [...next.preferredDays],
+                  dayOfMonth: next.dayOfMonth,
+                  specificDate: next.specificDate,
+                  executionTarget: next.executionTarget,
+                  domesticSupportId: next.executionTarget === 'HOUSEHOLD' ? null : next.domesticSupportId
+                };
+              }
+            });
+            nextConfigs[taskId] = roomsMap;
+          }
+        });
+        return nextConfigs;
       });
+
+      return next;
+    });
+  };
+
+  // Toggle common weekly day using functional state update to prevent stale closures
+  const handleToggleCommonDay = (day: number) => {
+    setCommonConfig(prev => {
+      const isSelected = prev.preferredDays.includes(day);
+      const nextDays = isSelected
+        ? prev.preferredDays.filter(d => d !== day)
+        : [...prev.preferredDays, day].sort((a, b) => a - b);
+
+      const next = {
+        ...prev,
+        preferredDays: nextDays
+      };
+      commonConfigRef.current = next;
+
+      // Propagate changes immutably to non-customized rooms
+      setConfigs(prevConfigs => {
+        const nextConfigs = { ...prevConfigs };
+        Object.keys(nextConfigs).forEach(taskId => {
+          if (nextConfigs[taskId]) {
+            const roomsMap = { ...nextConfigs[taskId] };
+            Object.keys(roomsMap).forEach(roomId => {
+              const item = roomsMap[roomId];
+              if (item && item.selected && item.status !== 'ALREADY_ACTIVE' && !item.isCustomized) {
+                roomsMap[roomId] = {
+                  ...item,
+                  preferredDays: [...nextDays]
+                };
+              }
+            });
+            nextConfigs[taskId] = roomsMap;
+          }
+        });
+        return nextConfigs;
+      });
+
       return next;
     });
   };
@@ -298,13 +359,30 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     setValidationError(null);
   };
 
-  // Toggle weekly/biweekly day for individual room
+  // Toggle weekly/biweekly day for individual room (functional update to prevent stale closures)
   const handleToggleDay = (taskId: string, roomId: string, day: number) => {
-    const current = configs[taskId]?.[roomId]?.preferredDays || [];
-    const next = current.includes(day)
-      ? current.filter(d => d !== day)
-      : [...current, day].sort((a, b) => a - b);
-    handleUpdateRoomConfig(taskId, roomId, { preferredDays: next, isCustomized: true });
+    setConfigs(prev => {
+      const taskConfigs = prev[taskId];
+      if (!taskConfigs || !taskConfigs[roomId]) return prev;
+      const current = taskConfigs[roomId];
+      const currentDays = current.preferredDays || [];
+      const nextDays = currentDays.includes(day)
+        ? currentDays.filter(d => d !== day)
+        : [...currentDays, day].sort((a, b) => a - b);
+
+      return {
+        ...prev,
+        [taskId]: {
+          ...taskConfigs,
+          [roomId]: {
+            ...current,
+            preferredDays: nextDays,
+            isCustomized: true
+          }
+        }
+      };
+    });
+    setValidationError(null);
   };
 
   // Toggle customize view expansion for room card
@@ -369,26 +447,27 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     });
   };
 
-  // Confirm reset to default
+  // Confirm reset to default (restores current common config values)
   const handleConfirmResetToDefault = (taskId: string, roomId: string) => {
+    const current = commonConfigRef.current;
     setConfigs(prev => {
       const taskConfigs = prev[taskId];
       if (!taskConfigs || !taskConfigs[roomId]) return prev;
-      const current = taskConfigs[roomId];
+      const currentItem = taskConfigs[roomId];
 
       return {
         ...prev,
         [taskId]: {
           ...taskConfigs,
           [roomId]: {
-            ...current,
-            frequency: commonFreq,
-            preferredTime: commonTime,
-            preferredDays: commonDays,
-            dayOfMonth: commonDayOfMonth,
-            specificDate: commonSpecificDate,
-            executionTarget: commonTarget,
-            domesticSupportId: commonTarget === 'HOUSEHOLD' ? null : commonSupportId,
+            ...currentItem,
+            frequency: current.frequency,
+            preferredTime: current.preferredTime,
+            preferredDays: [...current.preferredDays],
+            dayOfMonth: current.dayOfMonth,
+            specificDate: current.specificDate,
+            executionTarget: current.executionTarget,
+            domesticSupportId: current.executionTarget === 'HOUSEHOLD' ? null : current.domesticSupportId,
             isCustomized: false,
             isExpanded: false,
             confirmingReset: false
@@ -398,8 +477,9 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     });
   };
 
-  // Apply common config to all selected combinations in Step 2 (only non-customized)
+  // Apply common config to all eligible (selected, non-customized) rooms
   const handleApplyCommonConfig = () => {
+    const current = commonConfigRef.current;
     setConfigs(prev => {
       const next = { ...prev };
       Object.keys(next).forEach(taskId => {
@@ -410,13 +490,13 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
             if (item && item.selected && item.status !== 'ALREADY_ACTIVE' && !item.isCustomized) {
               roomsMap[roomId] = {
                 ...item,
-                frequency: commonFreq,
-                preferredTime: commonTime,
-                preferredDays: commonDays,
-                dayOfMonth: commonDayOfMonth,
-                specificDate: commonSpecificDate,
-                executionTarget: commonTarget,
-                domesticSupportId: commonTarget === 'HOUSEHOLD' ? null : commonSupportId
+                frequency: current.frequency,
+                preferredTime: current.preferredTime,
+                preferredDays: [...current.preferredDays],
+                dayOfMonth: current.dayOfMonth,
+                specificDate: current.specificDate,
+                executionTarget: current.executionTarget,
+                domesticSupportId: current.executionTarget === 'HOUSEHOLD' ? null : current.domesticSupportId
               };
             }
           });
@@ -1090,12 +1170,7 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
                         key={day}
                         id={`btn-common-day-${day}`}
                         type="button"
-                        onClick={() => {
-                          const next = isSelected
-                            ? commonDays.filter(d => d !== day)
-                            : [...commonDays, day].sort((a, b) => a - b);
-                          updateCommonConfig({ days: next });
-                        }}
+                        onClick={() => handleToggleCommonDay(day)}
                         className={`min-h-[38px] min-w-[44px] px-3 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-brand-primary text-text-on-primary shadow-2xs'
@@ -1185,8 +1260,9 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
                 type="button"
                 onClick={handleApplyCommonConfig}
                 className="text-xs font-semibold text-brand-primary hover:underline cursor-pointer"
+                aria-label="Aplicar aos não personalizados"
               >
-                Reaplicar a todos os não personalizados
+                Aplicar aos não personalizados
               </button>
             </div>
           </div>

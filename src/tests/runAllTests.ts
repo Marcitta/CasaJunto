@@ -78,6 +78,7 @@ import { runTaskCatalogMultiRoomInteractiveTests } from './taskCatalogMultiRoomI
 import { runTaskCatalogMultiRoomLayoutHF2Tests } from './taskCatalogMultiRoomLayoutB53Hf2.test';
 import { runTaskMultiRoomDedicatedViewB54TestSuite } from './taskMultiRoomDedicatedViewB54.test';
 import { runTaskMultiRoomInheritanceB54Hf1TestSuite } from './taskMultiRoomInheritanceB54Hf1.test';
+import { runTaskMultiRoomReapplyB54Hf2TestSuite } from './taskMultiRoomReapplyB54Hf2.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1156,6 +1157,20 @@ for (const r of b54Results) {
 console.log('\n--- GRUPO 80: FASE B.5.4-HF1: CONFIGURAÇÃO PADRÃO COM PERSONALIZAÇÃO POR AMBIENTE (HF1B-01 - HF1B-12) ---');
 const b54Hf1Results = runTaskMultiRoomInheritanceB54Hf1TestSuite();
 for (const r of b54Hf1Results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 81. CASA JUNTO — FASE B.5.4-HF2: CORRIGIR REAPLICAÇÃO DA CONFIGURAÇÃO COMUM (10 TESTES: HF2B-01 - HF2B-10)
+console.log('\n--- GRUPO 81: FASE B.5.4-HF2: CORRIGIR REAPLICAÇÃO DA CONFIGURAÇÃO COMUM (HF2B-01 - HF2B-10) ---');
+const b54Hf2Results = runTaskMultiRoomReapplyB54Hf2TestSuite();
+for (const r of b54Hf2Results) {
   totalTests++;
   if (r.passed) {
     totalPassed++;
