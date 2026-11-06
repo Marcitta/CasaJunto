@@ -80,6 +80,7 @@ import { runTaskMultiRoomDedicatedViewB54TestSuite } from './taskMultiRoomDedica
 import { runTaskMultiRoomInheritanceB54Hf1TestSuite } from './taskMultiRoomInheritanceB54Hf1.test';
 import { runTaskMultiRoomReapplyB54Hf2TestSuite } from './taskMultiRoomReapplyB54Hf2.test';
 import { runTaskMultiRoomBlocksABHf1TestSuite } from './taskMultiRoomBlocksABHf1.test';
+import { runTaskMultiRoomReactivationBlocoCHf1Tests } from './taskMultiRoomReactivationBlocoCHf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1194,6 +1195,23 @@ for (const r of b55Hf1AbResults) {
     totalFailed++;
     console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
   }
+}
+
+// 83. CASA JUNTO — FASE B.5.5-HF1: BLOCO C (AUD-06) — INTEGRIDADE NA REATIVAÇÃO DE ROTINAS (11 CENÁRIOS)
+console.log('\n--- GRUPO 83: FASE B.5.5-HF1: BLOCO C — INTEGRIDADE NA REATIVAÇÃO DE ROTINAS (AUD-06) ---');
+try {
+  totalTests++;
+  const b55Hf1CResult = await runTaskMultiRoomReactivationBlocoCHf1Tests();
+  if (b55Hf1CResult.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] AUD-06: ${b55Hf1CResult.message}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] AUD-06: ${b55Hf1CResult.message}`);
+  }
+} catch (err: any) {
+  totalFailed++;
+  console.log(`[✗ FAIL] AUD-06: Erro inesperado - ${err.message}`);
 }
 
 console.log('\n================================================================');

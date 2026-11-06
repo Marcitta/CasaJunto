@@ -386,8 +386,10 @@ export class RoutineContinuityService {
           // EXPECTED DATE + CANCELLED -> RESTORE SCHEDULED
           if (existingAsg && existingAsg.status === 'CANCELLED') {
             // Histórico com conclusões reais nunca deve ser sobrescrito
-            if (!existingAsg.completed_at && !existingAsg.completed_by) {
+            const isCompleted = existingAsg.completed_at || (existingAsg as any).completedAt || existingAsg.completed_by;
+            if (!isCompleted) {
               const startTime = routine.preferred_time || routine.preferredTime || existingAsg.scheduled_start || '09:00';
+              const resolvedDuration = this.resolveRoutineDurationMinutes(routine);
               const restoredAsg: TaskAssignment = {
                 ...existingAsg,
                 family_id: family.id,
@@ -395,10 +397,10 @@ export class RoutineContinuityService {
                 task_id: routine.task_master_id || (routine as any).taskMasterId || routine.task_id || existingAsg.task_id,
                 scheduled_date: dateStr,
                 scheduled_start: startTime,
-                scheduled_end: addMinutesToTimeString(startTime, this.resolveRoutineDurationMinutes(routine)),
+                scheduled_end: addMinutesToTimeString(startTime, resolvedDuration),
                 status: 'SCHEDULED',
-                is_unassigned: true,
-                member_id: '',
+                is_unassigned: existingAsg.member_id ? false : true,
+                member_id: existingAsg.member_id || '',
                 room_id: routine.room_id || routine.roomId || existingAsg.room_id,
                 updatedAt: new Date().toISOString()
               };
@@ -418,29 +420,96 @@ export class RoutineContinuityService {
                 inMemoryStore.set(existingAsg.id, restoredAsg);
               }
             }
-          }
-          // EXPECTED DATE + SCHEDULED -> KEEP (preserva atribuição e status)
-          // EXPECTED DATE + COMPLETED/DONE/IN_PROGRESS -> PRESERVE
-        } else {
-          // NON-EXPECTED DATE: Se existe assignment pendente nesta data a partir de hoje, cancela
-          if (existingAsg && dateStr >= today) {
-            if (existingAsg.status === 'SCHEDULED' || existingAsg.status === 'PENDING') {
-              const cancelledAsg: TaskAssignment = {
+          } else if (existingAsg && (existingAsg.status === 'SCHEDULED' || existingAsg.status === 'PENDING')) {
+            // EXPECTED DATE + SCHEDULED -> Atualiza horário, ambiente e duração estimada se mudaram
+            const startTime = routine.preferred_time || routine.preferredTime || existingAsg.scheduled_start || '09:00';
+            const resolvedDuration = this.resolveRoutineDurationMinutes(routine);
+            const expectedEnd = addMinutesToTimeString(startTime, resolvedDuration);
+            const targetRoom = routine.room_id || routine.roomId || existingAsg.room_id;
+
+            if (
+              existingAsg.scheduled_start !== startTime ||
+              existingAsg.scheduled_end !== expectedEnd ||
+              existingAsg.room_id !== targetRoom
+            ) {
+              const updatedAsg: TaskAssignment = {
                 ...existingAsg,
-                status: 'CANCELLED',
+                scheduled_start: startTime,
+                scheduled_end: expectedEnd,
+                room_id: targetRoom,
                 updatedAt: new Date().toISOString()
               };
-              assignmentMap.set(existingAsg.id, cancelledAsg);
-
+              assignmentMap.set(existingAsg.id, updatedAsg);
               if (!isDemoMode && db && family.id) {
                 const docRef = doc(db, 'families', family.id, 'assignments', existingAsg.id);
                 try {
-                  await setDoc(docRef, FirestoreMappers.fromTaskAssignment(cancelledAsg), { merge: true });
+                  await setDoc(docRef, FirestoreMappers.fromTaskAssignment(updatedAsg), { merge: true });
                 } catch (err) {
-                  console.warn('[syncRoutineOccurrences] Failed to persist CANCELLED for non-expected date:', err);
+                  console.warn('[syncRoutineOccurrences] Failed to persist UPDATED assignment:', err);
                 }
               } else if (inMemoryStore) {
-                inMemoryStore.set(existingAsg.id, cancelledAsg);
+                inMemoryStore.set(existingAsg.id, updatedAsg);
+              }
+            }
+          }
+          // EXPECTED DATE + COMPLETED/DONE/IN_PROGRESS -> PRESERVE
+        } else {
+          // NON-EXPECTED DATE: Se existe assignment nesta data a partir de hoje
+          if (existingAsg && dateStr >= today) {
+            const isFinishedOrInProgress =
+              existingAsg.status === 'COMPLETED' ||
+              existingAsg.status === 'DONE' ||
+              existingAsg.status === 'IN_PROGRESS' ||
+              Boolean(existingAsg.completed_at) ||
+              Boolean((existingAsg as any).completedAt) ||
+              Boolean(existingAsg.completed_by);
+
+            if (!isFinishedOrInProgress) {
+              const isAssigned = !existingAsg.is_unassigned && Boolean(existingAsg.member_id) && existingAsg.member_id.trim() !== '';
+              if (isAssigned) {
+                // AUD-06: Preservar atribuições existentes a moradores e sinalizar conflito
+                const conflictAsg: TaskAssignment = {
+                  ...existingAsg,
+                  assigned_reason: existingAsg.assigned_reason
+                    ? `${existingAsg.assigned_reason} (Conflito: fora da nova frequência)`
+                    : 'Conflito: ocorrência fora da nova frequência da rotina',
+                  factors: {
+                    ...(existingAsg.factors || {}),
+                    conflict: 'OFF_SCHEDULE_PRESERVED'
+                  },
+                  updatedAt: new Date().toISOString()
+                };
+                assignmentMap.set(existingAsg.id, conflictAsg);
+                if (!isDemoMode && db && family.id) {
+                  const docRef = doc(db, 'families', family.id, 'assignments', existingAsg.id);
+                  try {
+                    await setDoc(docRef, FirestoreMappers.fromTaskAssignment(conflictAsg), { merge: true });
+                  } catch (err) {
+                    console.warn('[syncRoutineOccurrences] Failed to persist CONFLICT assignment:', err);
+                  }
+                } else if (inMemoryStore) {
+                  inMemoryStore.set(existingAsg.id, conflictAsg);
+                }
+              } else if (existingAsg.status === 'SCHEDULED' || existingAsg.status === 'PENDING') {
+                // Ocorrência desatribuída em data não prevista: cancela
+                const cancelledAsg: TaskAssignment = {
+                  ...existingAsg,
+                  status: 'CANCELLED',
+                  unassigned_reason: 'Rotina reconfigurada: data fora do cronograma ativo',
+                  updatedAt: new Date().toISOString()
+                };
+                assignmentMap.set(existingAsg.id, cancelledAsg);
+
+                if (!isDemoMode && db && family.id) {
+                  const docRef = doc(db, 'families', family.id, 'assignments', existingAsg.id);
+                  try {
+                    await setDoc(docRef, FirestoreMappers.fromTaskAssignment(cancelledAsg), { merge: true });
+                  } catch (err) {
+                    console.warn('[syncRoutineOccurrences] Failed to persist CANCELLED for non-expected date:', err);
+                  }
+                } else if (inMemoryStore) {
+                  inMemoryStore.set(existingAsg.id, cancelledAsg);
+                }
               }
             }
             // NON-EXPECTED DATE + histórico protegido (COMPLETED, etc) -> PRESERVE
@@ -1022,16 +1091,20 @@ export class RoutineContinuityService {
   }
 
   /**
-   * Reativação de rotina (active = true).
-   * - Reutiliza o MESMO FamilyTask ID.
-   * - SEM backfill histórico.
-   * - Retoma a partir de HOJE.
-   * - Restaura ocorrências CANCELLED válidas de hoje em diante para SCHEDULED.
-   * - Gera novas ocorrências faltantes para completar o horizonte de 15 dias.
+   * Reativação de rotina (active = true) — FASE B.5.5 (AUD-06).
+   * - Reutiliza o MESMO FamilyTask ID original.
+   * - Preserva created_at, metadados históricos e campos legados não mapeados.
+   * - Normaliza preferred_days, day_of_month e start_date conforme a frequência final.
+   * - Reconcilia ocorrências futuras com a nova frequência, horário, ambiente e duração estimada.
+   * - NUNCA altera ocorrências passadas (< today), nem COMPLETED, DONE ou IN_PROGRESS, nem registros com evidências de conclusão.
+   * - NÃO gera ocorrências retroativas.
+   * - NÃO desatribui moradores silenciosamente: preserva atribuições e sinaliza conflitos para datas fora do novo cronograma.
+   * - Garante idempotência absoluta em reativações repetidas.
    */
   public static async reactivateRoutine(params: {
     familyId: string;
     routineId: string;
+    updates?: Partial<FamilyTask>;
     existingRoutines: FamilyTask[];
     existingAssignments: TaskAssignment[];
     isDemoMode?: boolean;
@@ -1040,11 +1113,13 @@ export class RoutineContinuityService {
     reactivatedRoutine: FamilyTask;
     restoredAssignments: TaskAssignment[];
     newAssignments: TaskAssignment[];
+    reconciledAssignments: TaskAssignment[];
     allAssignments: TaskAssignment[];
   }> {
     const {
       familyId,
       routineId,
+      updates = {},
       existingRoutines,
       existingAssignments,
       isDemoMode = false,
@@ -1056,53 +1131,205 @@ export class RoutineContinuityService {
       throw new Error(`Rotina com ID ${routineId} não encontrada.`);
     }
 
-    const reactivatedRoutine: FamilyTask = {
-      ...routine,
-      active: true,
-      updated_at: new Date().toISOString()
-    };
-
-    const targetTmId = routine.task_master_id || (routine as any).taskMasterId || (routine as any).task_id;
     const today = getFamilyLocalDate(timezone);
     const horizonDates = getRollingDateHorizon(today, 15);
+    const now = new Date().toISOString();
+
+    const rawFreq = updates.frequency || routine.frequency || 'DAILY';
+    const normalizedFrequency = (typeof rawFreq === 'string' ? rawFreq : 'DAILY').toUpperCase();
+
+    const isWeeklyOrBiweekly =
+      normalizedFrequency === 'WEEKLY' ||
+      normalizedFrequency === 'BIWEEKLY' ||
+      normalizedFrequency === 'SEVERAL_TIMES_WEEK';
+    const isMonthly = normalizedFrequency === 'MONTHLY';
+    const isOneTime = normalizedFrequency === 'ONE_TIME' || normalizedFrequency === 'ONCE';
+
+    // 4. Normalizar preferred_days, day_of_month e start_date conforme a frequência final (AUD-06)
+    const normalizedPreferredDays = isWeeklyOrBiweekly
+      ? (updates.preferred_days || updates.preferredDays || routine.preferred_days || routine.preferredDays || [1])
+      : undefined;
+
+    const normalizedDayOfMonth = isMonthly
+      ? (updates.day_of_month !== undefined && updates.day_of_month !== null
+          ? Number(updates.day_of_month)
+          : (updates.dayOfMonth !== undefined && updates.dayOfMonth !== null
+              ? Number(updates.dayOfMonth)
+              : (routine.day_of_month !== undefined && routine.day_of_month !== null
+                  ? Number(routine.day_of_month)
+                  : (routine.dayOfMonth !== undefined && routine.dayOfMonth !== null
+                      ? Number(routine.dayOfMonth)
+                      : 1))))
+      : undefined;
+
+    const normalizedStartDate = isOneTime
+      ? (updates.start_date || updates.startDate || routine.start_date || routine.startDate || today)
+      : (normalizedFrequency === 'BIWEEKLY'
+          ? (updates.start_date || updates.startDate || routine.start_date || routine.startDate || today)
+          : undefined);
+
+    const resolvedTime =
+      updates.preferred_time ||
+      updates.preferredTime ||
+      routine.preferred_time ||
+      routine.preferredTime ||
+      '09:00';
+
+    const resolvedRoomId =
+      updates.room_id ||
+      updates.roomId ||
+      routine.room_id ||
+      routine.roomId;
+
+    const resolvedDuration =
+      updates.estimated_minutes !== undefined &&
+      updates.estimated_minutes !== null &&
+      !Number.isNaN(Number(updates.estimated_minutes))
+        ? Number(updates.estimated_minutes)
+        : (updates.estimatedMinutes !== undefined &&
+            updates.estimatedMinutes !== null &&
+            !Number.isNaN(Number(updates.estimatedMinutes))
+            ? Number(updates.estimatedMinutes)
+            : RoutineContinuityService.resolveRoutineDurationMinutes({ ...routine, ...updates } as FamilyTask));
+
+    // 1, 2 e 3: Preservar ID original, created_at, metadados e mesclar atualização
+    const reactivatedRoutine: FamilyTask = {
+      ...routine,
+      ...updates,
+      id: routine.id,
+      created_at: routine.created_at || routine.createdAt || now,
+      createdAt: routine.createdAt || routine.created_at || now,
+      active: true,
+      frequency: normalizedFrequency,
+      preferred_days: normalizedPreferredDays,
+      preferredDays: normalizedPreferredDays,
+      day_of_month: normalizedDayOfMonth,
+      dayOfMonth: normalizedDayOfMonth,
+      start_date: normalizedStartDate,
+      startDate: normalizedStartDate,
+      preferred_time: resolvedTime,
+      preferredTime: resolvedTime,
+      room_id: resolvedRoomId,
+      roomId: resolvedRoomId,
+      estimated_minutes: resolvedDuration,
+      estimatedMinutes: resolvedDuration,
+      updated_at: now,
+      updatedAt: now
+    };
+
     const restoredAssignments: TaskAssignment[] = [];
+    const reconciledAssignments: TaskAssignment[] = [];
     const assignmentMap = new Map<string, TaskAssignment>();
 
     for (const asg of existingAssignments) {
       assignmentMap.set(asg.id, { ...asg });
     }
 
-    // 1. Restaura ocorrências CANCELLED de hoje em diante que sejam válidas no cronograma atual
+    // 5. Reconciliar ocorrências futuras
     for (const asg of existingAssignments) {
       const asgDate = asg.scheduled_date || (asg as any).scheduledDate || (asg as any).dueDate;
-
       const matches = RoutineContinuityService.isAssignmentMatchingRoutine(asg, routine, existingRoutines);
+      if (!matches) continue;
 
-      if (matches && asgDate && asgDate >= today && asg.status === 'CANCELLED') {
-        if (RoutineGenerator.shouldOccurOnDate(reactivatedRoutine, asgDate)) {
-          const startTime = reactivatedRoutine.preferred_time || reactivatedRoutine.preferredTime || asg.scheduled_start || '09:00';
-          const resolvedDuration = this.resolveRoutineDurationMinutes(reactivatedRoutine);
-          const restored: TaskAssignment = {
-            ...asg,
-            family_task_id: routineId,
-            scheduled_date: asgDate,
-            scheduled_start: startTime,
-            scheduled_end: asg.scheduled_end || addMinutesToTimeString(startTime, resolvedDuration),
-            status: 'SCHEDULED'
-          };
-          assignmentMap.set(asg.id, restored);
-          restoredAssignments.push(restored);
+      // 6 & 7: Nunca alterar ocorrências passadas (< today), nem COMPLETED, DONE ou IN_PROGRESS, nem com evidências de conclusão
+      const isPast = Boolean(asgDate && asgDate < today);
+      const isCompletedOrInProgress =
+        asg.status === 'COMPLETED' ||
+        asg.status === 'DONE' ||
+        asg.status === 'IN_PROGRESS' ||
+        Boolean(asg.completed_at) ||
+        Boolean((asg as any).completedAt) ||
+        Boolean(asg.completed_by);
+
+      if (isPast || isCompletedOrInProgress) {
+        continue; // Preservação estrita
+      }
+
+      if (asgDate && asgDate >= today) {
+        const shouldOccur = RoutineGenerator.shouldOccurOnDate(reactivatedRoutine, asgDate);
+
+        if (shouldOccur) {
+          // EXPECTED DATE:
+          if (asg.status === 'CANCELLED') {
+            const startTime = reactivatedRoutine.preferred_time || reactivatedRoutine.preferredTime || asg.scheduled_start || '09:00';
+            const restored: TaskAssignment = {
+              ...asg,
+              family_task_id: routineId,
+              scheduled_date: asgDate,
+              scheduled_start: startTime,
+              scheduled_end: addMinutesToTimeString(startTime, resolvedDuration),
+              room_id: resolvedRoomId || asg.room_id,
+              status: 'SCHEDULED',
+              is_unassigned: asg.member_id ? false : (asg.is_unassigned !== undefined ? asg.is_unassigned : true),
+              updatedAt: now
+            };
+            assignmentMap.set(asg.id, restored);
+            restoredAssignments.push(restored);
+            reconciledAssignments.push(restored);
+          } else {
+            // EXPECTED DATE + SCHEDULED/PENDING: atualiza horário, ambiente e duração estimada
+            const startTime = reactivatedRoutine.preferred_time || reactivatedRoutine.preferredTime || asg.scheduled_start || '09:00';
+            const expectedEnd = addMinutesToTimeString(startTime, resolvedDuration);
+            const targetRoom = resolvedRoomId || asg.room_id;
+
+            if (
+              asg.scheduled_start !== startTime ||
+              asg.scheduled_end !== expectedEnd ||
+              asg.room_id !== targetRoom
+            ) {
+              const updated: TaskAssignment = {
+                ...asg,
+                family_task_id: routineId,
+                scheduled_date: asgDate,
+                scheduled_start: startTime,
+                scheduled_end: expectedEnd,
+                room_id: targetRoom,
+                updatedAt: now
+              };
+              assignmentMap.set(asg.id, updated);
+              reconciledAssignments.push(updated);
+            }
+          }
+        } else {
+          // NON-EXPECTED DATE:
+          // 8 & 9: Para ocorrências futuras já atribuídas a moradores, preservar a atribuição e sinalizar conflito
+          const isAssigned = !asg.is_unassigned && Boolean(asg.member_id) && asg.member_id.trim() !== '';
+          if (isAssigned) {
+            const conflictAsg: TaskAssignment = {
+              ...asg,
+              assigned_reason: asg.assigned_reason
+                ? `${asg.assigned_reason} (Conflito: fora da nova frequência)`
+                : 'Conflito: ocorrência fora da nova frequência da rotina',
+              factors: {
+                ...(asg.factors || {}),
+                conflict: 'OFF_SCHEDULE_PRESERVED'
+              },
+              updatedAt: now
+            };
+            assignmentMap.set(asg.id, conflictAsg);
+            reconciledAssignments.push(conflictAsg);
+          } else if (asg.status !== 'CANCELLED') {
+            // Ocorrência futura desatribuída em data não prevista: cancela
+            const cancelledAsg: TaskAssignment = {
+              ...asg,
+              status: 'CANCELLED',
+              unassigned_reason: 'Rotina reativada com novo cronograma que não inclui esta data',
+              updatedAt: now
+            };
+            assignmentMap.set(asg.id, cancelledAsg);
+            reconciledAssignments.push(cancelledAsg);
+          }
         }
       }
     }
 
-    // 2. Gera ocorrências faltantes no horizonte de 15 dias a partir de hoje
+    // 2. Gera ocorrências faltantes no horizonte de 15 dias a partir de hoje (sem retroatividade)
     const missing = RoutineGenerator.generateMissingOccurrences({
       routine: reactivatedRoutine,
       familyId,
       horizonDates,
       existingOccurrences: Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED'),
-      durationMinutes: this.resolveRoutineDurationMinutes(reactivatedRoutine)
+      durationMinutes: resolvedDuration
     });
 
     const newAssignments: TaskAssignment[] = [];
@@ -1116,18 +1343,26 @@ export class RoutineContinuityService {
       const routineRef = doc(db, 'families', familyId, 'familyTasks', routineId);
       await setDoc(routineRef, FirestoreMappers.fromFamilyTask(reactivatedRoutine), { merge: true });
 
-      const batch = writeBatch(db);
-      for (const asg of restoredAssignments) {
-        const asgRef = doc(db, 'families', familyId, 'assignments', asg.id);
-        batch.set(asgRef, FirestoreMappers.fromTaskAssignment(asg), { merge: true });
+      if (reconciledAssignments.length > 0 || newAssignments.length > 0) {
+        const batch = writeBatch(db);
+        for (const asg of reconciledAssignments) {
+          const asgRef = doc(db, 'families', familyId, 'assignments', asg.id);
+          batch.set(asgRef, FirestoreMappers.fromTaskAssignment(asg), { merge: true });
+        }
+        for (const occ of newAssignments) {
+          const asgRef = doc(db, 'families', familyId, 'assignments', occ.id);
+          batch.set(asgRef, FirestoreMappers.fromTaskAssignment(occ));
+        }
+        await batch.commit();
       }
-      for (const occ of newAssignments) {
-        const asgRef = doc(db, 'families', familyId, 'assignments', occ.id);
-        batch.set(asgRef, FirestoreMappers.fromTaskAssignment(occ));
-      }
-      await batch.commit();
     }
 
-    return { reactivatedRoutine, restoredAssignments, newAssignments, allAssignments: Array.from(assignmentMap.values()) };
+    return {
+      reactivatedRoutine,
+      restoredAssignments,
+      newAssignments,
+      reconciledAssignments,
+      allAssignments: Array.from(assignmentMap.values())
+    };
   }
 }

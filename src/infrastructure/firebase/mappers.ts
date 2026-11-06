@@ -312,7 +312,27 @@ export class FirestoreMappers {
       : (data.estimatedMinutes !== undefined && data.estimatedMinutes !== null && !Number.isNaN(Number(data.estimatedMinutes))
         ? Number(data.estimatedMinutes)
         : undefined);
+
+    const isWeeklyOrBiweekly = resolvedFrequency === 'WEEKLY' || resolvedFrequency === 'BIWEEKLY' || resolvedFrequency === 'SEVERAL_TIMES_WEEK';
+    const isMonthly = resolvedFrequency === 'MONTHLY';
+    const isOneTime = resolvedFrequency === 'ONE_TIME' || resolvedFrequency === 'ONCE';
+
+    const preferredDaysClean = isWeeklyOrBiweekly
+      ? (data.preferred_days || data.preferredDays || [1])
+      : undefined;
+    const dayOfMonthClean = isMonthly
+      ? (data.day_of_month !== undefined && data.day_of_month !== null
+          ? Number(data.day_of_month)
+          : (data.dayOfMonth !== undefined && data.dayOfMonth !== null
+              ? Number(data.dayOfMonth)
+              : 1))
+      : undefined;
+    const startDateClean = isOneTime || resolvedFrequency === 'BIWEEKLY'
+      ? (data.start_date || data.startDate || undefined)
+      : undefined;
+
     return {
+      ...data,
       id: docId,
       family_id: data.family_id || data.familyId || '',
       familyId: data.familyId || data.family_id || '',
@@ -327,12 +347,12 @@ export class FirestoreMappers {
       room: data.room || undefined,
       category: data.category || master?.category || undefined,
       frequency: resolvedFrequency,
-      preferred_days: data.preferred_days || data.preferredDays || [1],
-      preferredDays: data.preferredDays || data.preferred_days || [1],
-      day_of_month: data.day_of_month !== undefined ? data.day_of_month : (data.dayOfMonth !== undefined ? data.dayOfMonth : undefined),
-      dayOfMonth: data.dayOfMonth !== undefined ? data.dayOfMonth : (data.day_of_month !== undefined ? data.day_of_month : undefined),
-      start_date: data.start_date || data.startDate || undefined,
-      startDate: data.startDate || data.start_date || undefined,
+      preferred_days: preferredDaysClean,
+      preferredDays: preferredDaysClean,
+      day_of_month: dayOfMonthClean,
+      dayOfMonth: dayOfMonthClean,
+      start_date: startDateClean,
+      startDate: startDateClean,
       preferred_time: data.preferred_time || data.preferredTime || undefined,
       preferredTime: data.preferredTime || data.preferred_time || undefined,
       estimated_minutes: rawEstMin,
@@ -347,7 +367,9 @@ export class FirestoreMappers {
       customDescription: data.customDescription || data.custom_description || undefined,
       custom_description: data.custom_description || data.customDescription || undefined,
       createdAt: data.createdAt || data.created_at || now,
-      updatedAt: data.updatedAt || data.updated_at || now
+      created_at: data.created_at || data.createdAt || now,
+      updatedAt: data.updatedAt || data.updated_at || now,
+      updated_at: data.updated_at || data.updatedAt || now
     };
   }
 
@@ -365,7 +387,27 @@ export class FirestoreMappers {
         : (task.estimatedMinutes !== undefined && task.estimatedMinutes !== null && !Number.isNaN(Number(task.estimatedMinutes))
           ? Number(task.estimatedMinutes)
           : null);
+
+    const isWeeklyOrBiweekly = resolvedFrequency === 'WEEKLY' || resolvedFrequency === 'BIWEEKLY' || resolvedFrequency === 'SEVERAL_TIMES_WEEK';
+    const isMonthly = resolvedFrequency === 'MONTHLY';
+    const isOneTime = resolvedFrequency === 'ONE_TIME' || resolvedFrequency === 'ONCE';
+
+    const preferredDaysClean = isWeeklyOrBiweekly
+      ? (task.preferred_days || task.preferredDays || [1])
+      : null;
+    const dayOfMonthClean = isMonthly
+      ? (task.day_of_month !== undefined && task.day_of_month !== null
+          ? Number(task.day_of_month)
+          : (task.dayOfMonth !== undefined && task.dayOfMonth !== null
+              ? Number(task.dayOfMonth)
+              : 1))
+      : null;
+    const startDateClean = isOneTime || resolvedFrequency === 'BIWEEKLY'
+      ? (task.start_date || task.startDate || null)
+      : null;
+
     const payload: Record<string, any> = {
+      ...task,
       id: task.id,
       family_id: task.family_id || task.familyId || null,
       familyId: task.familyId || task.family_id || null,
@@ -383,12 +425,12 @@ export class FirestoreMappers {
       roomId: task.roomId || task.room_id || null,
       category: task.category || master?.category || null,
       frequency: resolvedFrequency,
-      preferred_days: task.preferred_days || task.preferredDays || [1],
-      preferredDays: task.preferredDays || task.preferred_days || [1],
-      day_of_month: task.day_of_month !== undefined ? task.day_of_month : (task.dayOfMonth !== undefined ? task.dayOfMonth : null),
-      dayOfMonth: task.dayOfMonth !== undefined ? task.dayOfMonth : (task.day_of_month !== undefined ? task.day_of_month : null),
-      start_date: task.start_date || task.startDate || null,
-      startDate: task.startDate || task.start_date || null,
+      preferred_days: preferredDaysClean,
+      preferredDays: preferredDaysClean,
+      day_of_month: dayOfMonthClean,
+      dayOfMonth: dayOfMonthClean,
+      start_date: startDateClean,
+      startDate: startDateClean,
       preferred_time: task.preferred_time || task.preferredTime || null,
       preferredTime: task.preferredTime || task.preferred_time || null,
       estimated_minutes: resolvedEstimatedMinutes,
@@ -398,7 +440,9 @@ export class FirestoreMappers {
       executionTarget: task.executionTarget || (task as any).execution_target || 'HOUSEHOLD',
       domesticSupportId: task.domesticSupportId !== undefined ? task.domesticSupportId : ((task as any).domestic_support_id !== undefined ? (task as any).domestic_support_id : null),
       createdAt: task.createdAt || task.created_at || now,
-      updatedAt: now
+      created_at: task.created_at || task.createdAt || now,
+      updatedAt: now,
+      updated_at: now
     };
     return FirestoreMappers.sanitizePayload(payload);
   }

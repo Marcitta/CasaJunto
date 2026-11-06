@@ -155,7 +155,7 @@ export interface AppContextType {
   addRoutine: (routine: Partial<FamilyTask>) => Promise<FamilyTask>;
   updateRoutine: (routineId: string, updates: Partial<FamilyTask>) => Promise<void>;
   deactivateRoutine: (routineId: string) => Promise<void>;
-  reactivateRoutine: (routineId: string) => Promise<void>;
+  reactivateRoutine: (routineId: string, updates?: Partial<FamilyTask>) => Promise<void>;
   batchAddRoutines: (items: BatchAddRoutineInput[]) => Promise<BatchAddResult>;
   batchDeactivateRoutines: (routineIds: string[]) => Promise<BatchDeactivateResult>;
   activeChaosSession?: ChaosSession | null;
@@ -210,6 +210,26 @@ export function buildFamilyTaskFromBatchInput(params: {
   const isCustom = !master;
   const resolvedName = item.name || existing?.name || existing?.customTitle || master?.name || 'Rotina';
 
+  const normalizedFrequency = (item.frequency || existing?.frequency || 'DAILY').toUpperCase();
+  const normalizedPreferredDays =
+    normalizedFrequency === 'WEEKLY' || normalizedFrequency === 'BIWEEKLY'
+      ? (item.preferredDays && item.preferredDays.length > 0
+        ? [...item.preferredDays]
+        : (existing?.preferred_days || existing?.preferredDays || [1]))
+      : undefined;
+  const normalizedDayOfMonth =
+    normalizedFrequency === 'MONTHLY'
+      ? (item.dayOfMonth !== undefined
+        ? item.dayOfMonth
+        : (existing?.day_of_month ?? existing?.dayOfMonth ?? 1))
+      : undefined;
+  const normalizedStartDate =
+    normalizedFrequency === 'ONE_TIME' || normalizedFrequency === 'ONCE'
+      ? (item.startDate || existing?.start_date || existing?.startDate || today)
+      : (normalizedFrequency === 'BIWEEKLY'
+        ? (item.startDate || existing?.start_date || existing?.startDate || today)
+        : undefined);
+
   if (existing) {
     const target = item.executionTarget ?? existing.executionTarget;
     const resolvedTarget = resolveExecutionTarget({ executionTarget: target });
@@ -247,19 +267,21 @@ export function buildFamilyTaskFromBatchInput(params: {
       custom_title: existing.custom_title || existing.customTitle || resolvedName,
       room_id: item.roomId || existing.room_id || existing.roomId || 'geral',
       roomId: item.roomId || existing.roomId || existing.room_id || 'geral',
-      frequency: item.frequency || existing.frequency || 'DAILY',
-      preferred_days: item.preferredDays || existing.preferred_days || existing.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
-      preferredDays: item.preferredDays || existing.preferredDays || existing.preferred_days || (item.frequency === 'WEEKLY' ? [1] : []),
-      day_of_month: item.dayOfMonth ?? existing.day_of_month ?? existing.dayOfMonth,
-      dayOfMonth: item.dayOfMonth ?? existing.dayOfMonth ?? existing.day_of_month,
+      frequency: normalizedFrequency,
+      preferred_days: normalizedPreferredDays,
+      preferredDays: normalizedPreferredDays,
+      day_of_month: normalizedDayOfMonth,
+      dayOfMonth: normalizedDayOfMonth,
       preferred_time: item.preferredTime || existing.preferred_time || existing.preferredTime || '09:00',
       preferredTime: item.preferredTime || existing.preferredTime || existing.preferred_time || '09:00',
       estimated_minutes: resolvedDuration,
       estimatedMinutes: resolvedDuration,
       executionTarget: resolvedTarget,
       domesticSupportId: resolvedSupportId,
-      start_date: item.startDate || existing.start_date || existing.startDate || today,
-      startDate: item.startDate || existing.startDate || existing.start_date || today,
+      start_date: normalizedStartDate,
+      startDate: normalizedStartDate,
+      created_at: existing.created_at || existing.createdAt || now,
+      createdAt: existing.createdAt || existing.created_at || now,
       updated_at: now,
       updatedAt: now
     };
@@ -291,11 +313,11 @@ export function buildFamilyTaskFromBatchInput(params: {
     category: item.category || master?.category || 'cleaning',
     room_id: item.roomId || 'geral',
     roomId: item.roomId || 'geral',
-    frequency: item.frequency || 'DAILY',
-    preferred_days: item.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
-    preferredDays: item.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
-    day_of_month: item.dayOfMonth,
-    dayOfMonth: item.dayOfMonth,
+    frequency: normalizedFrequency,
+    preferred_days: normalizedPreferredDays,
+    preferredDays: normalizedPreferredDays,
+    day_of_month: normalizedDayOfMonth,
+    dayOfMonth: normalizedDayOfMonth,
     preferred_time: item.preferredTime || '09:00',
     preferredTime: item.preferredTime || '09:00',
     estimated_minutes: resolvedNewDuration,
@@ -303,8 +325,8 @@ export function buildFamilyTaskFromBatchInput(params: {
     active: true,
     executionTarget: resolvedTarget,
     domesticSupportId: resolvedSupportId,
-    start_date: item.startDate || today,
-    startDate: item.startDate || today,
+    start_date: normalizedStartDate,
+    startDate: normalizedStartDate,
     created_at: now,
     createdAt: now,
     updated_at: now,
@@ -2424,7 +2446,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
-  const reactivateRoutine = async (routineId: string): Promise<void> => {
+  const reactivateRoutine = async (routineId: string, updates?: Partial<FamilyTask>): Promise<void> => {
     if (currentMember && currentMember.role && currentMember.role !== 'ADMIN') {
       throw new Error('Apenas administradores podem gerenciar rotinas da família.');
     }
@@ -2451,6 +2473,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const result = await RoutineContinuityService.reactivateRoutine({
       familyId,
       routineId,
+      updates,
       existingRoutines: familyTasks,
       existingAssignments: existingOccs,
       isDemoMode: isDemo,
