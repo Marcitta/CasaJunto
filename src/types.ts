@@ -193,6 +193,7 @@ export interface Task {
   isRotational?: boolean;
   minAge?: number;
   estimatedMinutes?: number;
+  completionDuration?: number;
   category?: TaskCategory | string;
   chaosSessionId?: string;
   chaos_session_id?: string;

@@ -307,6 +307,11 @@ export class FirestoreMappers {
     const resolvedCustomTitle = data.customTitle || data.custom_title || data.name || master?.name || undefined;
     const rawFreq = data.frequency || 'DAILY';
     const resolvedFrequency = typeof rawFreq === 'string' ? rawFreq.toUpperCase() : 'DAILY';
+    const rawEstMin = data.estimated_minutes !== undefined && data.estimated_minutes !== null && !Number.isNaN(Number(data.estimated_minutes))
+      ? Number(data.estimated_minutes)
+      : (data.estimatedMinutes !== undefined && data.estimatedMinutes !== null && !Number.isNaN(Number(data.estimatedMinutes))
+        ? Number(data.estimatedMinutes)
+        : undefined);
     return {
       id: docId,
       family_id: data.family_id || data.familyId || '',
@@ -330,7 +335,8 @@ export class FirestoreMappers {
       startDate: data.startDate || data.start_date || undefined,
       preferred_time: data.preferred_time || data.preferredTime || undefined,
       preferredTime: data.preferredTime || data.preferred_time || undefined,
-      estimated_minutes: data.estimated_minutes !== undefined ? data.estimated_minutes : (data.estimatedMinutes !== undefined ? data.estimatedMinutes : undefined),
+      estimated_minutes: rawEstMin,
+      estimatedMinutes: rawEstMin,
       active: typeof data.active === 'boolean' ? data.active : (data.active !== undefined && data.active !== null ? Boolean(data.active) : true),
       chaosEligible: data.chaosEligible === true,
       assigned_automatically: data.assigned_automatically !== undefined ? Boolean(data.assigned_automatically) : true,
@@ -353,6 +359,12 @@ export class FirestoreMappers {
     const resolvedCustomTitle = task.customTitle || task.custom_title || task.name || master?.name || null;
     const rawFreq = task.frequency || 'DAILY';
     const resolvedFrequency = typeof rawFreq === 'string' ? rawFreq.toUpperCase() : 'DAILY';
+    const resolvedEstimatedMinutes =
+      task.estimated_minutes !== undefined && task.estimated_minutes !== null && !Number.isNaN(Number(task.estimated_minutes))
+        ? Number(task.estimated_minutes)
+        : (task.estimatedMinutes !== undefined && task.estimatedMinutes !== null && !Number.isNaN(Number(task.estimatedMinutes))
+          ? Number(task.estimatedMinutes)
+          : null);
     const payload: Record<string, any> = {
       id: task.id,
       family_id: task.family_id || task.familyId || null,
@@ -379,7 +391,7 @@ export class FirestoreMappers {
       startDate: task.startDate || task.start_date || null,
       preferred_time: task.preferred_time || task.preferredTime || null,
       preferredTime: task.preferredTime || task.preferred_time || null,
-      estimated_minutes: task.estimated_minutes !== undefined ? task.estimated_minutes : (task.estimatedMinutes !== undefined ? task.estimatedMinutes : null),
+      estimated_minutes: resolvedEstimatedMinutes,
       active: typeof task.active === 'boolean' ? task.active : (task.active !== undefined && task.active !== null ? Boolean(task.active) : true),
       chaosEligible: task.chaosEligible === true,
       assigned_automatically: task.assigned_automatically !== undefined ? Boolean(task.assigned_automatically) : true,
@@ -412,7 +424,7 @@ export class FirestoreMappers {
       is_unassigned: data.is_unassigned !== undefined ? data.is_unassigned : (data.isUnassigned !== undefined ? data.isUnassigned : false),
       unassigned_reason: data.unassigned_reason || data.unassignedReason || undefined,
       completed_at: data.completed_at || data.completedAt || undefined,
-      completion_duration: data.completion_duration || data.completionDuration || undefined,
+      completion_duration: data.completion_duration ?? data.completionDuration ?? undefined,
       completed_by: data.completed_by || data.completedByMemberId || data.completedBy || undefined,
       completed_by_name: data.completed_by_name || data.completedByName || undefined,
       completion_type: data.completion_type || data.completionType || undefined,

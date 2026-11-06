@@ -242,6 +242,10 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
     }
 
     try {
+      const resolvedDuration =
+        isReactivation && selectedRoomInfo?.routine
+          ? (selectedRoomInfo.routine.estimated_minutes ?? selectedRoomInfo.routine.estimatedMinutes)
+          : (task.duration_minutes ?? 20);
       await onConfirm({
         taskMasterId: task.id,
         name: task.name,
@@ -250,6 +254,7 @@ export const AddRoutineToRoomModal: React.FC<AddRoutineToRoomModalProps> = ({
         preferredDays,
         dayOfMonth,
         preferredTime,
+        durationMinutes: resolvedDuration,
         executionTarget,
         domesticSupportId: executionTarget === 'HOUSEHOLD' ? null : domesticSupportId
       });

@@ -76,7 +76,7 @@ export const EditFamilyTaskModal: React.FC<EditFamilyTaskModalProps> = ({
       setCustomDescription(routine.customDescription || routine.custom_description || '');
       const rawRoomId = routine.room_id || routine.roomId || '';
       setSelectedRoomId(activeRooms.some(r => r.id === rawRoomId) ? rawRoomId : (rawRoomId || ''));
-      setDurationMinutes(routine.estimated_minutes || 20);
+      setDurationMinutes(routine.estimated_minutes ?? routine.estimatedMinutes ?? master?.duration_minutes ?? 20);
       setPreferredTime(routine.preferred_time || routine.preferredTime || '08:00');
       const f = (routine.frequency || 'DAILY').toUpperCase();
       if (['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY'].includes(f)) {

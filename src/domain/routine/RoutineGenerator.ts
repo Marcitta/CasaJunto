@@ -105,7 +105,13 @@ export class RoutineGenerator {
   ): TaskAssignment {
     const id = this.getDeterministicOccurrenceId(routine.id, dateStr);
     const startTime = routine.preferred_time || routine.preferredTime || '08:00';
-    const endTime = addMinutesToTimeString(startTime, routine.estimated_minutes || durationMinutes);
+    const explicitDuration =
+      routine.estimated_minutes !== undefined && routine.estimated_minutes !== null && !Number.isNaN(Number(routine.estimated_minutes))
+        ? Number(routine.estimated_minutes)
+        : (routine.estimatedMinutes !== undefined && routine.estimatedMinutes !== null && !Number.isNaN(Number(routine.estimatedMinutes))
+          ? Number(routine.estimatedMinutes)
+          : undefined);
+    const endTime = addMinutesToTimeString(startTime, explicitDuration ?? durationMinutes);
 
     return {
       id,

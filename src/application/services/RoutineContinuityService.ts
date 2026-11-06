@@ -20,6 +20,7 @@ import {
   Task
 } from '../../types';
 import { RoutineGenerator } from '../../domain/routine/RoutineGenerator';
+import { allMasterTasks } from '../../data/tasks';
 import { getActiveMembers } from '../../domain/selectors';
 import {
   getFamilyLocalDate,
@@ -79,6 +80,39 @@ export interface SyncRollingRoutinesResult {
 }
 
 export class RoutineContinuityService {
+  /**
+   * Resolve a duração estimada canônica da rotina (em minutos) sem jamais confundir com tempo real de execução.
+   * Prioridade: FamilyTask.estimated_minutes -> FamilyTask.estimatedMinutes -> TaskMaster.duration_minutes -> 20.
+   */
+  public static resolveRoutineDurationMinutes(routine?: FamilyTask): number {
+    if (
+      routine?.estimated_minutes !== undefined &&
+      routine.estimated_minutes !== null &&
+      !Number.isNaN(Number(routine.estimated_minutes))
+    ) {
+      return Number(routine.estimated_minutes);
+    }
+    if (
+      routine?.estimatedMinutes !== undefined &&
+      routine.estimatedMinutes !== null &&
+      !Number.isNaN(Number(routine.estimatedMinutes))
+    ) {
+      return Number(routine.estimatedMinutes);
+    }
+    const tmId =
+      routine?.task_master_id ||
+      (routine as any)?.taskMasterId ||
+      (routine as any)?.task_id ||
+      (routine as any)?.taskId;
+    if (tmId) {
+      const master = allMasterTasks.find(tm => tm.id === tmId);
+      if (master?.duration_minutes !== undefined && master.duration_minutes !== null) {
+        return Number(master.duration_minutes);
+      }
+    }
+    return 20;
+  }
+
   /**
    * Grava uma ocorrência de forma atômica no Firestore SOMENTE se ela não existir.
    * Garante concorrência à prova de corrida (ex: dois dispositivos abrindo simultaneamente).
@@ -361,7 +395,7 @@ export class RoutineContinuityService {
                 task_id: routine.task_master_id || (routine as any).taskMasterId || routine.task_id || existingAsg.task_id,
                 scheduled_date: dateStr,
                 scheduled_start: startTime,
-                scheduled_end: addMinutesToTimeString(startTime, routine.estimated_minutes || 20),
+                scheduled_end: addMinutesToTimeString(startTime, this.resolveRoutineDurationMinutes(routine)),
                 status: 'SCHEDULED',
                 is_unassigned: true,
                 member_id: '',
@@ -421,7 +455,8 @@ export class RoutineContinuityService {
         routine,
         familyId: family.id,
         horizonDates,
-        existingOccurrences: Array.from(assignmentMap.values())
+        existingOccurrences: Array.from(assignmentMap.values()),
+        durationMinutes: this.resolveRoutineDurationMinutes(routine)
       });
 
       for (const occ of missing) {
@@ -516,7 +551,7 @@ export class RoutineContinuityService {
             roomId: asg.room_id || 'geral',
             roomName: asg.room_id || 'geral',
             category: 'cleaning',
-            durationMinutes: 20,
+            durationMinutes: r ? this.resolveRoutineDurationMinutes(r) : 20,
             effort: 10,
             frequency: 'DAILY',
             isUnassigned: true,
@@ -674,7 +709,7 @@ export class RoutineContinuityService {
       familyId,
       horizonDates,
       existingOccurrences: Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED'),
-      durationMinutes: routine.estimated_minutes || 20
+      durationMinutes: this.resolveRoutineDurationMinutes(routine)
     });
 
     const newAssignments: TaskAssignment[] = [];
@@ -805,7 +840,7 @@ export class RoutineContinuityService {
               scheduled_start: updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start,
               scheduled_end: addMinutesToTimeString(
                 updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start || '09:00',
-                updatedRoutine.estimated_minutes || 20
+                this.resolveRoutineDurationMinutes(updatedRoutine)
               )
             };
             assignmentMap.set(asg.id, updated);
@@ -827,7 +862,7 @@ export class RoutineContinuityService {
               scheduled_start: updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start,
               scheduled_end: addMinutesToTimeString(
                 updatedRoutine.preferred_time || updatedRoutine.preferredTime || asg.scheduled_start || '09:00',
-                updatedRoutine.estimated_minutes || 20
+                this.resolveRoutineDurationMinutes(updatedRoutine)
               )
             };
             assignmentMap.set(asg.id, restored);
@@ -844,7 +879,7 @@ export class RoutineContinuityService {
       familyId,
       horizonDates,
       existingOccurrences: nonCancelled,
-      durationMinutes: updatedRoutine.estimated_minutes || 20
+      durationMinutes: this.resolveRoutineDurationMinutes(updatedRoutine)
     });
 
     const newAssignments: TaskAssignment[] = [];
@@ -1045,10 +1080,14 @@ export class RoutineContinuityService {
 
       if (matches && asgDate && asgDate >= today && asg.status === 'CANCELLED') {
         if (RoutineGenerator.shouldOccurOnDate(reactivatedRoutine, asgDate)) {
+          const startTime = reactivatedRoutine.preferred_time || reactivatedRoutine.preferredTime || asg.scheduled_start || '09:00';
+          const resolvedDuration = this.resolveRoutineDurationMinutes(reactivatedRoutine);
           const restored: TaskAssignment = {
             ...asg,
             family_task_id: routineId,
             scheduled_date: asgDate,
+            scheduled_start: startTime,
+            scheduled_end: asg.scheduled_end || addMinutesToTimeString(startTime, resolvedDuration),
             status: 'SCHEDULED'
           };
           assignmentMap.set(asg.id, restored);
@@ -1062,7 +1101,8 @@ export class RoutineContinuityService {
       routine: reactivatedRoutine,
       familyId,
       horizonDates,
-      existingOccurrences: Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED')
+      existingOccurrences: Array.from(assignmentMap.values()).filter(a => a.status !== 'CANCELLED'),
+      durationMinutes: this.resolveRoutineDurationMinutes(reactivatedRoutine)
     });
 
     const newAssignments: TaskAssignment[] = [];

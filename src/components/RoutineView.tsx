@@ -589,7 +589,7 @@ export const RoutineView: React.FC = () => {
                                     <span>•</span>
                                     <span className="flex items-center gap-1">
                                       <Clock className="w-3 h-3" />
-                                      {routine.preferred_time || routine.preferredTime || '08:00'} ({routine.estimated_minutes || 20}m)
+                                      {routine.preferred_time || routine.preferredTime || '08:00'} ({routine.estimated_minutes ?? routine.estimatedMinutes ?? (allMasterTasks.find(tm => tm.id === (routine.task_master_id || routine.taskMasterId || routine.task_id || (routine as any).taskId))?.duration_minutes) ?? 20}m)
                                     </span>
                                   </div>
                                 </div>

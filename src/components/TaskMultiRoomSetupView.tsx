@@ -39,6 +39,7 @@ export interface RoomConfigItem {
   dayOfMonth: number;
   specificDate?: string;
   preferredTime: string;
+  durationMinutes?: number;
   executionTarget: ExecutionTarget;
   domesticSupportId: string | null;
   status: 'NEW' | 'REACTIVATE' | 'ALREADY_ACTIVE';
@@ -58,6 +59,60 @@ const DAY_LABELS = [
   { day: 5, label: 'Sex' },
   { day: 6, label: 'Sáb' }
 ];
+
+function getDefaultTomorrowDateString(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().split('T')[0];
+}
+
+export function formatFrequencyLabel(
+  freq: string,
+  days?: number[],
+  dom?: number,
+  specificDate?: string
+): string {
+  const normalized = (freq || '').toUpperCase();
+  switch (normalized) {
+    case 'DAILY':
+      return 'Diária';
+    case 'WEEKLY': {
+      if (!days || days.length === 0) return 'Semanal';
+      const dayNames = days.map(d => DAY_LABELS.find(l => l.day === d)?.label).filter(Boolean);
+      return `Semanal (${dayNames.join(', ')})`;
+    }
+    case 'BIWEEKLY': {
+      if (!days || days.length === 0) return 'Quinzenal';
+      const biweekNames = days.map(d => DAY_LABELS.find(l => l.day === d)?.label).filter(Boolean);
+      return `Quinzenal (${biweekNames.join(', ')})`;
+    }
+    case 'MONTHLY':
+      return `Mensal (dia ${dom || 1})`;
+    case 'ONE_TIME':
+    case 'ONCE':
+      return specificDate ? `Pontual (${specificDate})` : 'Pontual';
+    default:
+      return freq;
+  }
+}
+
+export function formatExecutionTargetLabel(
+  executionTarget?: ExecutionTarget,
+  domesticSupportId?: string | null,
+  activeSupports: DomesticSupport[] = []
+): string {
+  if (executionTarget === 'EXTERNAL_SUPPORT') {
+    const supportName = activeSupports.find(s => s.id === domesticSupportId)?.name || 'Profissional';
+    return `Ajuda externa (${supportName})`;
+  }
+  if (executionTarget === 'FLEXIBLE') {
+    const preferredSupport = domesticSupportId
+      ? activeSupports.find(s => s.id === domesticSupportId)?.name
+      : undefined;
+    return preferredSupport ? `Flexível (${preferredSupport})` : 'Flexível';
+  }
+  return 'Pessoas da casa';
+}
 
 export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
   tasks,
@@ -94,6 +149,7 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
   const initialConfigs = useMemo(() => {
     const configMap: Record<string, Record<string, RoomConfigItem>> = {};
     const defaultSupportId = activeSupports[0]?.id || null;
+    const defaultTomorrowDate = getDefaultTomorrowDateString();
 
     tasks.forEach(task => {
       let defaultFreq = 'DAILY';
@@ -159,12 +215,25 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
           if (existing.domesticSupportId) supportId = existing.domesticSupportId;
         }
 
+        const existingDuration =
+          existing?.estimated_minutes !== undefined &&
+          existing?.estimated_minutes !== null &&
+          !Number.isNaN(Number(existing.estimated_minutes))
+            ? Number(existing.estimated_minutes)
+            : (existing?.estimatedMinutes !== undefined &&
+              existing?.estimatedMinutes !== null &&
+              !Number.isNaN(Number(existing.estimatedMinutes))
+              ? Number(existing.estimatedMinutes)
+              : undefined);
+
         configMap[task.id][room.id] = {
           selected: false,
           frequency: freq,
           preferredDays: days,
           dayOfMonth: dom,
+          specificDate: existing?.start_date || existing?.startDate || defaultTomorrowDate,
           preferredTime: existing?.preferred_time || existing?.preferredTime || '09:00',
+          durationMinutes: existing ? existingDuration : (task.duration_minutes || 20),
           executionTarget: target,
           domesticSupportId: target === 'HOUSEHOLD' ? null : supportId,
           status,
@@ -193,11 +262,7 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     preferredTime: '09:00',
     preferredDays: [1],
     dayOfMonth: 1,
-    specificDate: (() => {
-      const d = new Date();
-      d.setDate(d.getDate() + 1);
-      return d.toISOString().split('T')[0];
-    })(),
+    specificDate: getDefaultTomorrowDateString(),
     executionTarget: 'HOUSEHOLD',
     domesticSupportId: null
   }));
@@ -633,7 +698,9 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
         dayOfMonth: config.frequency === 'MONTHLY' ? config.dayOfMonth : undefined,
         startDate: config.frequency === 'ONE_TIME' ? config.specificDate : undefined,
         preferredTime: config.preferredTime || '09:00',
-        durationMinutes: task.duration_minutes || 20,
+        durationMinutes: op.action === 'REACTIVATE'
+          ? config.durationMinutes
+          : (config.durationMinutes ?? task.duration_minutes ?? 20),
         effort: task.effort_level ? task.effort_level * 5 : 10,
         executionTarget: config.executionTarget,
         domesticSupportId: config.executionTarget === 'HOUSEHOLD' ? null : (config.domesticSupportId ?? null)
@@ -641,27 +708,6 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
     });
 
     await onConfirm(payload);
-  };
-
-  const formatFrequencyLabel = (freq: string, days?: number[], dom?: number, specificDate?: string) => {
-    switch (freq) {
-      case 'DAILY':
-        return 'Diária';
-      case 'WEEKLY':
-        if (!days || days.length === 0) return 'Semanal';
-        const dayNames = days.map(d => DAY_LABELS.find(l => l.day === d)?.label).filter(Boolean);
-        return `Semanal (${dayNames.join(', ')})`;
-      case 'BIWEEKLY':
-        if (!days || days.length === 0) return 'Quinzenal';
-        const biweekNames = days.map(d => DAY_LABELS.find(l => l.day === d)?.label).filter(Boolean);
-        return `Quinzenal (${biweekNames.join(', ')})`;
-      case 'MONTHLY':
-        return `Mensal (dia ${dom || 1})`;
-      case 'ONE_TIME':
-        return specificDate ? `Pontual (${specificDate})` : 'Pontual';
-      default:
-        return freq;
-    }
   };
 
   return (
@@ -1282,12 +1328,11 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
                 config.dayOfMonth,
                 config.specificDate
               );
-              const targetSummary =
-                config.executionTarget === 'HOUSEHOLD'
-                  ? 'Pessoas da casa'
-                  : config.executionTarget === 'EXTERNAL_SUPPORT'
-                  ? `Ajuda externa (${activeSupports.find(s => s.id === config.domesticSupportId)?.name || 'Profissional'})`
-                  : 'Flexível';
+              const targetSummary = formatExecutionTargetLabel(
+                config.executionTarget,
+                config.domesticSupportId,
+                activeSupports
+              );
 
               return (
                 <div
@@ -1642,16 +1687,22 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
               <div className="space-y-2">
                 {selectedCombinations.map((op, idx) => {
                   const { task, room, config, action, compat } = op;
-                  const supportName =
-                    activeSupports.find(s => s.id === config.domesticSupportId)?.name || 'Apoio externo';
-                  const targetText =
-                    config.executionTarget === 'HOUSEHOLD'
-                      ? 'Pessoas da casa'
-                      : `Apoio (${supportName})`;
+                  const freqSummary = formatFrequencyLabel(
+                    config.frequency,
+                    config.preferredDays,
+                    config.dayOfMonth,
+                    config.specificDate
+                  );
+                  const targetText = formatExecutionTargetLabel(
+                    config.executionTarget,
+                    config.domesticSupportId,
+                    activeSupports
+                  );
 
                   return (
                     <div
                       key={`review-${task.id}-${room.id}-${idx}`}
+                      id={`review-card-${task.id}-${room.id}`}
                       className="p-3.5 rounded-2xl border border-border-default bg-surface-subtle/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
                     >
                       <div className="space-y-1">
@@ -1660,8 +1711,8 @@ export const TaskMultiRoomSetupView: React.FC<TaskMultiRoomSetupViewProps> = ({
                           <span className="text-text-muted">•</span>
                           <span className="font-semibold text-brand-primary">{room.name}</span>
                         </div>
-                        <div className="text-text-secondary">
-                          {formatFrequencyLabel(config.frequency, config.preferredDays, config.dayOfMonth)} às {config.preferredTime} • {targetText}
+                        <div id={`review-summary-${task.id}-${room.id}`} className="text-text-secondary">
+                          {freqSummary} às {config.preferredTime} • {targetText}
                         </div>
 
                         {/* Unconfirmed compatibility warning in review */}

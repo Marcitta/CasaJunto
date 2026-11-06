@@ -79,6 +79,7 @@ import { runTaskCatalogMultiRoomLayoutHF2Tests } from './taskCatalogMultiRoomLay
 import { runTaskMultiRoomDedicatedViewB54TestSuite } from './taskMultiRoomDedicatedViewB54.test';
 import { runTaskMultiRoomInheritanceB54Hf1TestSuite } from './taskMultiRoomInheritanceB54Hf1.test';
 import { runTaskMultiRoomReapplyB54Hf2TestSuite } from './taskMultiRoomReapplyB54Hf2.test';
+import { runTaskMultiRoomBlocksABHf1TestSuite } from './taskMultiRoomBlocksABHf1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1171,6 +1172,20 @@ for (const r of b54Hf1Results) {
 console.log('\n--- GRUPO 81: FASE B.5.4-HF2: CORRIGIR REAPLICAÇÃO DA CONFIGURAÇÃO COMUM (HF2B-01 - HF2B-10) ---');
 const b54Hf2Results = runTaskMultiRoomReapplyB54Hf2TestSuite();
 for (const r of b54Hf2Results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 82. CASA JUNTO — FASE B.5.5-HF1: BLOCOS A (AUD-01, AUD-02) & B (AUD-08) (9 TESTES: B55HF1-AB-01 - B55HF1-AB-09)
+console.log('\n--- GRUPO 82: FASE B.5.5-HF1: BLOCOS A & B — REVISÃO FINAL & DURAÇÃO ESTIMADA (B55HF1-AB-01 - B55HF1-AB-09) ---');
+const b55Hf1AbResults = await runTaskMultiRoomBlocksABHf1TestSuite();
+for (const r of b55Hf1AbResults) {
   totalTests++;
   if (r.passed) {
     totalPassed++;

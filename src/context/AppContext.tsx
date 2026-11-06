@@ -172,6 +172,146 @@ export interface AppContextType {
   reactivateDomesticSupport?: (id: string) => Promise<DomesticSupport>;
 }
 
+export function resolveTaskEstimatedMinutes(ft?: FamilyTask, master?: TaskMaster): number | undefined {
+  if (
+    ft?.estimated_minutes !== undefined &&
+    ft.estimated_minutes !== null &&
+    !Number.isNaN(Number(ft.estimated_minutes))
+  ) {
+    return Number(ft.estimated_minutes);
+  }
+  if (
+    ft?.estimatedMinutes !== undefined &&
+    ft.estimatedMinutes !== null &&
+    !Number.isNaN(Number(ft.estimatedMinutes))
+  ) {
+    return Number(ft.estimatedMinutes);
+  }
+  if (
+    master?.duration_minutes !== undefined &&
+    master.duration_minutes !== null &&
+    !Number.isNaN(Number(master.duration_minutes))
+  ) {
+    return Number(master.duration_minutes);
+  }
+  return undefined;
+}
+
+export function buildFamilyTaskFromBatchInput(params: {
+  item: BatchAddRoutineInput;
+  existing?: FamilyTask;
+  master?: TaskMaster;
+  familyId: string;
+  routineId?: string;
+  today: string;
+  now: string;
+}): FamilyTask {
+  const { item, existing, master, familyId, routineId, today, now } = params;
+  const isCustom = !master;
+  const resolvedName = item.name || existing?.name || existing?.customTitle || master?.name || 'Rotina';
+
+  if (existing) {
+    const target = item.executionTarget ?? existing.executionTarget;
+    const resolvedTarget = resolveExecutionTarget({ executionTarget: target });
+    const resolvedSupportId = resolvedTarget === 'HOUSEHOLD'
+      ? null
+      : (item.executionTarget !== undefined
+        ? (item.domesticSupportId ?? null)
+        : (existing.domesticSupportId ?? null));
+
+    const existingDuration =
+      existing.estimated_minutes !== undefined &&
+      existing.estimated_minutes !== null &&
+      !Number.isNaN(Number(existing.estimated_minutes))
+        ? Number(existing.estimated_minutes)
+        : (existing.estimatedMinutes !== undefined &&
+          existing.estimatedMinutes !== null &&
+          !Number.isNaN(Number(existing.estimatedMinutes))
+          ? Number(existing.estimatedMinutes)
+          : undefined);
+
+    const explicitItemDuration =
+      item.durationMinutes !== undefined &&
+      item.durationMinutes !== null &&
+      !Number.isNaN(Number(item.durationMinutes))
+        ? Number(item.durationMinutes)
+        : undefined;
+
+    const resolvedDuration = explicitItemDuration ?? existingDuration;
+
+    return {
+      ...existing,
+      active: true,
+      name: resolvedName,
+      customTitle: existing.customTitle || existing.custom_title || resolvedName,
+      custom_title: existing.custom_title || existing.customTitle || resolvedName,
+      room_id: item.roomId || existing.room_id || existing.roomId || 'geral',
+      roomId: item.roomId || existing.roomId || existing.room_id || 'geral',
+      frequency: item.frequency || existing.frequency || 'DAILY',
+      preferred_days: item.preferredDays || existing.preferred_days || existing.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
+      preferredDays: item.preferredDays || existing.preferredDays || existing.preferred_days || (item.frequency === 'WEEKLY' ? [1] : []),
+      day_of_month: item.dayOfMonth ?? existing.day_of_month ?? existing.dayOfMonth,
+      dayOfMonth: item.dayOfMonth ?? existing.dayOfMonth ?? existing.day_of_month,
+      preferred_time: item.preferredTime || existing.preferred_time || existing.preferredTime || '09:00',
+      preferredTime: item.preferredTime || existing.preferredTime || existing.preferred_time || '09:00',
+      estimated_minutes: resolvedDuration,
+      estimatedMinutes: resolvedDuration,
+      executionTarget: resolvedTarget,
+      domesticSupportId: resolvedSupportId,
+      start_date: item.startDate || existing.start_date || existing.startDate || today,
+      startDate: item.startDate || existing.startDate || existing.start_date || today,
+      updated_at: now,
+      updatedAt: now
+    };
+  }
+
+  const resolvedTarget = resolveExecutionTarget({ executionTarget: item.executionTarget });
+  const resolvedSupportId = resolvedTarget === 'HOUSEHOLD' ? null : (item.domesticSupportId ?? null);
+  const targetRoutineId = routineId || `ft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const resolvedNewDuration =
+    item.durationMinutes !== undefined &&
+    item.durationMinutes !== null &&
+    !Number.isNaN(Number(item.durationMinutes))
+      ? Number(item.durationMinutes)
+      : (master?.duration_minutes !== undefined && master.duration_minutes !== null
+        ? Number(master.duration_minutes)
+        : undefined);
+
+  return {
+    id: targetRoutineId,
+    family_id: familyId,
+    familyId,
+    task_id: isCustom ? undefined : item.taskMasterId,
+    taskId: isCustom ? undefined : item.taskMasterId,
+    task_master_id: isCustom ? undefined : item.taskMasterId,
+    taskMasterId: isCustom ? undefined : item.taskMasterId,
+    name: resolvedName,
+    customTitle: resolvedName,
+    custom_title: resolvedName,
+    category: item.category || master?.category || 'cleaning',
+    room_id: item.roomId || 'geral',
+    roomId: item.roomId || 'geral',
+    frequency: item.frequency || 'DAILY',
+    preferred_days: item.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
+    preferredDays: item.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
+    day_of_month: item.dayOfMonth,
+    dayOfMonth: item.dayOfMonth,
+    preferred_time: item.preferredTime || '09:00',
+    preferredTime: item.preferredTime || '09:00',
+    estimated_minutes: resolvedNewDuration,
+    estimatedMinutes: resolvedNewDuration,
+    active: true,
+    executionTarget: resolvedTarget,
+    domesticSupportId: resolvedSupportId,
+    start_date: item.startDate || today,
+    startDate: item.startDate || today,
+    created_at: now,
+    createdAt: now,
+    updated_at: now,
+    updatedAt: now
+  };
+}
+
 /**
  * Mapeador canônico único de TaskAssignment -> Task (utilizado por loadRealAssignments e reloadAssignments).
  * Garante idempotência, resolução de Master/FamilyTask e de-duplicação canônica por chave temporal.
@@ -194,6 +334,7 @@ export function mapAssignmentsToTasks(params: {
     const freqInfo = resolveFrequencyFromRoutine(asg, ft);
     const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
     const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
+    const resolvedEstimatedMinutes = resolveTaskEstimatedMinutes(ft, master);
 
     // HOTFIX-DUP-1 / DS1C-HF5 / FASE-B.5.1: Proteção canônica de hidratação no AppContext (sem dedupe por título)
     // A identidade canônica primária da ocorrência recorrente é: {familyTaskId}_{scheduledDate}
@@ -233,7 +374,9 @@ export function mapAssignmentsToTasks(params: {
       dayOfMonth: freqInfo.dayOfMonth,
       routineNotFound: freqInfo.routineNotFound,
       effort: master?.effort_level ? master.effort_level * 5 : 10,
-      durationMinutes: master?.duration_minutes || 20,
+      durationMinutes: resolvedEstimatedMinutes ?? 20,
+      estimatedMinutes: resolvedEstimatedMinutes,
+      completionDuration: asg.completion_duration,
       category: master?.category || 'cleaning',
       roomId: asg.room_id || fallbackRoomType,
       roomName: roomObj?.name || fallbackRoomType,
@@ -360,7 +503,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         is_unassigned: t.isUnassigned ?? (!t.assignedMemberId),
         assigned_reason: t.assignedReason,
         unassigned_reason: t.unassignedReason,
-        factors: t.factors
+        factors: t.factors,
+        completion_duration: t.completionDuration
       }));
 
       const syncResult = await RoutineContinuityService.syncRoutineOccurrences({
@@ -780,6 +924,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const ft = familyTasks.find(f => f.id === asg.family_task_id);
           const freqInfo = resolveFrequencyFromRoutine(asg, ft);
           const master = allMasterTasks.find(tm => tm.id === asg.task_id);
+          const resolvedEstimatedMinutes = resolveTaskEstimatedMinutes(ft, master);
           existingTask = {
             id: asg.id,
             familyId: asg.family_id,
@@ -796,6 +941,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             dayOfMonth: freqInfo.dayOfMonth,
             routineNotFound: freqInfo.routineNotFound,
             effort: master?.effort || 10,
+            durationMinutes: resolvedEstimatedMinutes ?? 20,
+            estimatedMinutes: resolvedEstimatedMinutes,
+            completionDuration: asg.completion_duration,
             createdAt: asg.scheduled_date || getTodayDateString(),
             updatedAt: asg.scheduled_date || getTodayDateString(),
             isUnassigned: asg.is_unassigned,
@@ -1948,7 +2096,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       completed_at: t.completedAt,
       completed_by: t.completedByMemberId,
       completed_by_name: t.completedByName,
-      completion_type: t.completionType
+      completion_type: t.completionType,
+      completion_duration: t.completionDuration
     }));
 
     const isDemo = isDemoMode || !authFamily;
@@ -1969,6 +2118,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const freqInfo = resolveFrequencyFromRoutine(asg, ft);
       const displayTitle = ft?.customTitle ?? ft?.custom_title ?? master?.name ?? asg.task_id;
       const displayDescription = ft?.customDescription ?? ft?.custom_description ?? master?.description ?? '';
+      const resolvedEstimatedMinutes = resolveTaskEstimatedMinutes(ft, master);
       return {
         id: asg.id,
         familyId: asg.family_id,
@@ -1992,7 +2142,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         dayOfMonth: freqInfo.dayOfMonth,
         routineNotFound: freqInfo.routineNotFound,
         effort: master?.effort_level ? master.effort_level * 5 : 10,
-        durationMinutes: master?.duration_minutes || 20,
+        durationMinutes: resolvedEstimatedMinutes ?? 20,
+        estimatedMinutes: resolvedEstimatedMinutes,
+        completionDuration: asg.completion_duration,
         category: master?.category || 'cleaning',
         roomId: asg.room_id || fallbackRoomType,
         roomName: roomObj?.name || fallbackRoomType,
@@ -2086,6 +2238,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const routineId = isDemo ? `ft-demo-${Date.now()}` : doc(collection(db, 'families', familyId, 'familyTasks')).id;
     const customTitle = data.customTitle || data.custom_title || data.name;
     const customDesc = data.customDescription || data.custom_description;
+    const master = targetTmId ? allMasterTasks.find(tm => tm.id === targetTmId) : undefined;
+    const resolvedDuration =
+      data.estimated_minutes !== undefined &&
+      data.estimated_minutes !== null &&
+      !Number.isNaN(Number(data.estimated_minutes))
+        ? Number(data.estimated_minutes)
+        : (data.estimatedMinutes !== undefined &&
+          data.estimatedMinutes !== null &&
+          !Number.isNaN(Number(data.estimatedMinutes))
+          ? Number(data.estimatedMinutes)
+          : (master?.duration_minutes !== undefined && master.duration_minutes !== null
+            ? Number(master.duration_minutes)
+            : undefined));
     const newRoutine: FamilyTask = {
       id: routineId,
       family_id: familyId,
@@ -2102,6 +2267,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       preferred_days: data.preferred_days || data.preferredDays || [0, 1, 2, 3, 4, 5, 6],
       preferred_time: data.preferred_time || data.preferredTime || '09:00',
       preferredTime: data.preferred_time || data.preferredTime || '09:00',
+      estimated_minutes: resolvedDuration,
+      estimatedMinutes: resolvedDuration,
       room_id: data.room_id || data.roomId || 'geral',
       roomId: data.room_id || data.roomId || 'geral',
       active: true,
@@ -2342,39 +2509,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           const isCustom = !existing.task_master_id && !existing.taskMasterId;
           const master = !isCustom ? allMasterTasks.find(tm => tm.id === (existing.task_master_id || existing.taskMasterId || item.taskMasterId)) : undefined;
-          const resolvedName = item.name || existing.name || existing.customTitle || master?.name || 'Rotina';
 
-          const target = item.executionTarget ?? existing.executionTarget;
-          const resolvedTarget = resolveExecutionTarget({ executionTarget: target });
-          const resolvedSupportId = resolvedTarget === 'HOUSEHOLD'
-            ? null
-            : (item.executionTarget !== undefined
-              ? (item.domesticSupportId ?? null)
-              : (existing.domesticSupportId ?? null));
-
-          // Reactivate existing FamilyTask: REUSE SAME ID!
-          const reactivated: FamilyTask = {
-            ...existing,
-            active: true,
-            name: resolvedName,
-            customTitle: existing.customTitle || existing.custom_title || resolvedName,
-            custom_title: existing.custom_title || existing.customTitle || resolvedName,
-            room_id: item.roomId || existing.room_id || existing.roomId || 'geral',
-            roomId: item.roomId || existing.roomId || existing.room_id || 'geral',
-            frequency: item.frequency || existing.frequency || 'DAILY',
-            preferred_days: item.preferredDays || existing.preferred_days || existing.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
-            preferredDays: item.preferredDays || existing.preferredDays || existing.preferred_days || (item.frequency === 'WEEKLY' ? [1] : []),
-            day_of_month: item.dayOfMonth ?? existing.day_of_month ?? existing.dayOfMonth,
-            dayOfMonth: item.dayOfMonth ?? existing.dayOfMonth ?? existing.day_of_month,
-            preferred_time: item.preferredTime || existing.preferred_time || existing.preferredTime || '09:00',
-            preferredTime: item.preferredTime || existing.preferredTime || existing.preferred_time || '09:00',
-            executionTarget: resolvedTarget,
-            domesticSupportId: resolvedSupportId,
-            start_date: item.startDate || existing.start_date || existing.startDate || today,
-            startDate: item.startDate || existing.startDate || existing.start_date || today,
-            updated_at: now,
-            updatedAt: now
-          };
+          // Reactivate existing FamilyTask: REUSE SAME ID and preserve configured duration!
+          const reactivated = buildFamilyTaskFromBatchInput({
+            item,
+            existing,
+            master,
+            familyId,
+            today,
+            now
+          });
 
           if (!isDemoMode && db && authFamily) {
             const ref = doc(db, 'families', authFamily.id, 'familyTasks', existing.id);
@@ -2384,46 +2528,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           currentRoutines[existingIndex] = reactivated;
           reactivatedCount++;
         } else {
-          // Create new canonical FamilyTask
+          // Create new canonical FamilyTask with persisted durationMinutes -> estimated_minutes
           const master = allMasterTasks.find(tm => tm.id === item.taskMasterId);
-          const isCustom = !master;
-          const resolvedName = item.name || master?.name || 'Rotina';
-
-          const resolvedTarget = resolveExecutionTarget({ executionTarget: item.executionTarget });
-          const resolvedSupportId = resolvedTarget === 'HOUSEHOLD' ? null : (item.domesticSupportId ?? null);
-
           const routineId = isDemoMode || !authFamily ? `ft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : doc(collection(db, 'families', familyId, 'familyTasks')).id;
-          const newRoutine: FamilyTask = {
-            id: routineId,
-            family_id: familyId,
+          const newRoutine = buildFamilyTaskFromBatchInput({
+            item,
+            master,
             familyId,
-            task_id: isCustom ? undefined : item.taskMasterId,
-            taskId: isCustom ? undefined : item.taskMasterId,
-            task_master_id: isCustom ? undefined : item.taskMasterId,
-            taskMasterId: isCustom ? undefined : item.taskMasterId,
-            name: resolvedName,
-            customTitle: resolvedName,
-            custom_title: resolvedName,
-            category: item.category || master?.category || 'cleaning',
-            room_id: item.roomId || 'geral',
-            roomId: item.roomId || 'geral',
-            frequency: item.frequency || 'DAILY',
-            preferred_days: item.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
-            preferredDays: item.preferredDays || (item.frequency === 'WEEKLY' ? [1] : []),
-            day_of_month: item.dayOfMonth,
-            dayOfMonth: item.dayOfMonth,
-            preferred_time: item.preferredTime || '09:00',
-            preferredTime: item.preferredTime || '09:00',
-            active: true,
-            executionTarget: resolvedTarget,
-            domesticSupportId: resolvedSupportId,
-            start_date: item.startDate || today,
-            startDate: item.startDate || today,
-            created_at: now,
-            createdAt: now,
-            updated_at: now,
-            updatedAt: now
-          };
+            routineId,
+            today,
+            now
+          });
 
           if (!isDemoMode && db && authFamily) {
             const ref = doc(db, 'families', authFamily.id, 'familyTasks', routineId);
