@@ -349,6 +349,50 @@ export interface BatchAddResult {
   reactivated: number;
   skipped: number;
   failed: string[];
+  granularResult?: GranularBatchAddResult;
+}
+
+export type BatchRoutineOperationStatus =
+  | 'CREATED'
+  | 'REACTIVATED'
+  | 'ALREADY_ACTIVE'
+  | 'OCCURRENCE_SYNC_PENDING'
+  | 'FAILED'
+  | 'UNKNOWN_COMMIT'
+  | 'AMBIGUOUS_LEGACY_CONFLICT';
+
+export interface BatchRoutineItemResult {
+  taskMasterId: string;
+  roomId: string;
+  taskName?: string;
+  roomName?: string;
+  status: BatchRoutineOperationStatus;
+  routineId?: string;
+  error?: string;
+  retryable: boolean;
+  conflictDetails?: {
+    conflictingRoutineIds: string[];
+    resolutionRequired: boolean;
+  };
+}
+
+export interface GranularBatchAddResult extends BatchAddResult {
+  items: BatchRoutineItemResult[];
+  operationId?: string;
+  hasPendingSync: boolean;
+  hasUnknownCommits: boolean;
+  hasConflicts: boolean;
+  success: boolean;
+  summary?: {
+    total: number;
+    created: number;
+    reactivated: number;
+    alreadyActive: number;
+    syncPending: number;
+    failed: number;
+    unknown: number;
+    conflicts: number;
+  };
 }
 
 export interface BatchDeactivateResult {

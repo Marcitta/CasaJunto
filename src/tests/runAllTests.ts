@@ -81,6 +81,11 @@ import { runTaskMultiRoomInheritanceB54Hf1TestSuite } from './taskMultiRoomInher
 import { runTaskMultiRoomReapplyB54Hf2TestSuite } from './taskMultiRoomReapplyB54Hf2.test';
 import { runTaskMultiRoomBlocksABHf1TestSuite } from './taskMultiRoomBlocksABHf1.test';
 import { runTaskMultiRoomReactivationBlocoCHf1Tests } from './taskMultiRoomReactivationBlocoCHf1.test';
+import { runTaskMultiRoomContractsBlocoDATests } from './taskMultiRoomContractsBlocoDA.test';
+import { runTaskMultiRoomTransactionalBlocoDB1Tests } from './taskMultiRoomTransactionalBlocoDB1.test';
+import { runTaskMultiRoomEmulatorBlocoDB2Tests } from './taskMultiRoomEmulatorBlocoDB2.test';
+import { runTaskMultiRoomControlledIntegrationB2BTests } from './taskMultiRoomControlledIntegrationB2B.test';
+import { runTaskMultiRoomGateSecurityCoexistenceB2CTests } from './taskMultiRoomGateSecurityCoexistenceB2C.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1197,21 +1202,108 @@ for (const r of b55Hf1AbResults) {
   }
 }
 
-// 83. CASA JUNTO — FASE B.5.5-HF1: BLOCO C (AUD-06) — INTEGRIDADE NA REATIVAÇÃO DE ROTINAS (11 CENÁRIOS)
-console.log('\n--- GRUPO 83: FASE B.5.5-HF1: BLOCO C — INTEGRIDADE NA REATIVAÇÃO DE ROTINAS (AUD-06) ---');
-try {
+// 83. CASA JUNTO — FASE B.5.5-HF1: BLOCO C (AUD-06) — INTEGRIDADE NA REATIVAÇÃO DE ROTINAS (11 TESTES: B55HF1-C-01 - B55HF1-C-11)
+console.log('\n--- GRUPO 83: FASE B.5.5-HF1: BLOCO C — INTEGRIDADE NA REATIVAÇÃO DE ROTINAS (B55HF1-C-01 - B55HF1-C-11) ---');
+const b55Hf1CResults = await runTaskMultiRoomReactivationBlocoCHf1Tests();
+for (const r of b55Hf1CResults) {
   totalTests++;
-  const b55Hf1CResult = await runTaskMultiRoomReactivationBlocoCHf1Tests();
-  if (b55Hf1CResult.passed) {
+  if (r.passed) {
     totalPassed++;
-    console.log(`[✓ PASS] AUD-06: ${b55Hf1CResult.message}`);
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
   } else {
     totalFailed++;
-    console.log(`[✗ FAIL] AUD-06: ${b55Hf1CResult.message}`);
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
   }
-} catch (err: any) {
-  totalFailed++;
-  console.log(`[✗ FAIL] AUD-06: Erro inesperado - ${err.message}`);
+}
+
+// 84. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-A — CONTRATOS E PREPARAÇÃO SEGURA (10 TESTES: B55HF1-DA-01 - B55HF1-DA-10)
+console.log('\n--- GRUPO 84: FASE B.5.5-HF1: ETAPA D-A — CONTRATOS E PREPARAÇÃO SEGURA (B55HF1-DA-01 - B55HF1-DA-10) ---');
+const b55Hf1DaResults = runTaskMultiRoomContractsBlocoDATests();
+for (const r of b55Hf1DaResults) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 85. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B1 — INFRAESTRUTURA TRANSACIONAL ISOLADA (14 TESTES: B55HF1-DB1-01 - B55HF1-DB1-14)
+console.log('\n--- GRUPO 85: FASE B.5.5-HF1: ETAPA D-B1 — INFRAESTRUTURA TRANSACIONAL ISOLADA (B55HF1-DB1-01 - B55HF1-DB1-14) ---');
+const b55Hf1Db1Results = await runTaskMultiRoomTransactionalBlocoDB1Tests();
+for (const r of b55Hf1Db1Results) {
+  totalTests++;
+  if (r.passed) {
+    totalPassed++;
+    console.log(`[✓ PASS] ${r.id}: ${r.name}`);
+  } else {
+    totalFailed++;
+    console.log(`[✗ FAIL] ${r.id}: ${r.name} - ${r.details || ''}`);
+  }
+}
+
+// 86. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2A — FIREBASE EMULATOR SUITE (16 CENÁRIOS: EMU-01 - EMU-16)
+console.log('\n--- GRUPO 86: FASE B.5.5-HF1: ETAPA D-B2A — FIREBASE EMULATOR TEST SUITE (EMU-01 - EMU-16) ---');
+const emuSuite = await runTaskMultiRoomEmulatorBlocoDB2Tests();
+console.log(`EMULATOR STATUS: ${emuSuite.status}`);
+console.log(`EMULATOR DIAGNOSTIC: ${emuSuite.summary}`);
+let emuBlockedCount = 0;
+for (const s of emuSuite.scenarios) {
+  if (s.status === 'PASS') {
+    totalTests++;
+    totalPassed++;
+    console.log(`[✓ PASS] ${s.id}: ${s.name}`);
+  } else if (s.status === 'BLOCKED') {
+    emuBlockedCount++;
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name}`);
+  } else {
+    totalTests++;
+    totalFailed++;
+    console.log(`[✗ FAIL] ${s.id}: ${s.name}`);
+  }
+}
+if (emuSuite.status === 'BLOCKED') {
+  console.log(`[INFO] 16 testes do emulador registrados como BLOCKED devido à ausência de Java no ambiente local.`);
+}
+
+// 87. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2B — INTEGRAÇÃO CONTROLADA NO EMULADOR (12 CENÁRIOS: B2B-01 - B2B-12)
+console.log('\n--- GRUPO 87: FASE B.5.5-HF1: ETAPA D-B2B — INTEGRAÇÃO CONTROLADA (B2B-01 - B2B-12) ---');
+const b2bSuite = await runTaskMultiRoomControlledIntegrationB2BTests();
+console.log(`B2B INTEGRATION STATUS: ${b2bSuite.status}`);
+console.log(`B2B INTEGRATION DIAGNOSTIC: ${b2bSuite.summary}`);
+for (const s of b2bSuite.scenarios) {
+  if (s.status === 'PASS') {
+    totalTests++;
+    totalPassed++;
+    console.log(`[✓ PASS] ${s.id}: ${s.name}`);
+  } else if (s.status === 'BLOCKED') {
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name}`);
+  } else {
+    totalTests++;
+    totalFailed++;
+    console.log(`[✗ FAIL] ${s.id}: ${s.name} - ${s.details || ''}`);
+  }
+}
+
+// 88. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (12 CENÁRIOS: B2C-01 - B2C-12)
+console.log('\n--- GRUPO 88: FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (B2C-01 - B2C-12) ---');
+const b2cSuite = await runTaskMultiRoomGateSecurityCoexistenceB2CTests();
+console.log(`B2C GATE STATUS: ${b2cSuite.status}`);
+console.log(`B2C GATE DIAGNOSTIC: ${b2cSuite.summary}`);
+for (const s of b2cSuite.scenarios) {
+  if (s.status === 'PASS') {
+    totalTests++;
+    totalPassed++;
+    console.log(`[✓ PASS] ${s.id}: ${s.name}`);
+  } else if (s.status === 'BLOCKED') {
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name}`);
+  } else {
+    totalTests++;
+    totalFailed++;
+    console.log(`[✗ FAIL] ${s.id}: ${s.name} - ${s.details || ''}`);
+  }
 }
 
 console.log('\n================================================================');

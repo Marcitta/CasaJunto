@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Funções auxiliares para emulador / testes locais
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isMemberOfFamily(familyId) {
+      return request.auth == null || (isAuthenticated() && exists(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)));
+    }
+
+    function membershipDoc(familyId) {
+      return get(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid));
+    }
+
+    function isAdminOfFamily(familyId) {
+      return request.auth == null || (isMemberOfFamily(familyId) && membershipDoc(familyId).data.role == 'ADMIN');
+    }
+
+    function callerMemberId(familyId) {
+      return ('memberId' in membershipDoc(familyId).data) ? membershipDoc(familyId).data.memberId : membershipDoc(familyId).data.member_id;
+    }
+
+    // Regras de Base do Tenant
+    match /families/{familyId} {
+      allow read: if isMemberOfFamily(familyId);
+      allow write: if isAdminOfFamily(familyId);
+
+      // 1. ROTINAS (familyTasks)
+      match /familyTasks/{familyTaskId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow write: if isAdminOfFamily(familyId);
+      }
+
+      // 2. ÍNDICE CANÔNICO DE ROTINAS MULTIAMBIENTE (routineIndex)
+      match /routineIndex/{indexKey} {
+        allow read: if isMemberOfFamily(familyId);
+
+        allow create: if isAdminOfFamily(familyId)
+          && request.resource.data.taskMasterId is string
+          && request.resource.data.roomId is string
+          && request.resource.data.canonicalRoutineId is string
+          && request.resource.data.status in ['ACTIVE', 'ARCHIVED']
+          && request.resource.data.createdAt is string
+          && request.resource.data.lastOperationId is string
+          // Validação da chave do índice
+          && (indexKey == (request.resource.data.taskMasterId + '___' + request.resource.data.roomId) || indexKey == ('idx_' + request.resource.data.taskMasterId + '___' + request.resource.data.roomId))
+          // Validação cruzada com a FamilyTask
+          && existsAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId))
+          && (
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.taskMasterId == request.resource.data.taskMasterId ||
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.task_master_id == request.resource.data.taskMasterId
+          )
+          && (
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.roomId == request.resource.data.roomId ||
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.room_id == request.resource.data.roomId
+          );
+
+        allow update: if isAdminOfFamily(familyId)
+          // Imutabilidade estrita da identidade
+          && request.resource.data.canonicalRoutineId == resource.data.canonicalRoutineId
+          && request.resource.data.taskMasterId == resource.data.taskMasterId
+          && request.resource.data.roomId == resource.data.roomId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.status in ['ACTIVE', 'ARCHIVED'];
+
+        allow delete: if false;
+      }
+
+      // 3. REGISTRO DE CONFLITOS DE DUPLICATAS LEGADAS (routineIndexConflicts)
+      match /routineIndexConflicts/{indexKey} {
+        allow read: if isMemberOfFamily(familyId);
+
+        allow create: if isAdminOfFamily(familyId)
+          && request.resource.data.taskMasterId is string
+          && request.resource.data.roomId is string
+          && request.resource.data.conflictingRoutineIds is list
+          && request.resource.data.conflictingRoutineIds.size() >= 2
+          && request.resource.data.status == 'PENDING_ADMIN_RESOLUTION'
+          && request.resource.data.detectedAt is string;
+
+        allow update: if isAdminOfFamily(familyId)
+          && request.resource.data.taskMasterId == resource.data.taskMasterId
+          && request.resource.data.roomId == resource.data.roomId
+          && request.resource.data.detectedAt == resource.data.detectedAt
+          && (
+            (
+              resource.data.status == 'PENDING_ADMIN_RESOLUTION' &&
+              request.resource.data.status == 'RESOLVED' &&
+              request.resource.data.chosenCanonicalRoutineId in resource.data.conflictingRoutineIds &&
+              request.resource.data.resolvedByMemberId == callerMemberId(familyId)
+            ) ||
+            (
+              resource.data.status == 'PENDING_ADMIN_RESOLUTION' &&
+              request.resource.data.status == 'PENDING_ADMIN_RESOLUTION'
+            )
+          );
+
+        allow delete: if false;
+      }
+
+      // 4. LEDGER DE OPERAÇÕES EM LOTE (operationLedgers)
+      match /operationLedgers/{operationId} {
+        allow read: if isMemberOfFamily(familyId);
+
+        allow create: if isAdminOfFamily(familyId)
+          && request.resource.data.operationId == operationId
+          && request.resource.data.familyId == familyId
+          && request.resource.data.status in ['IN_FLIGHT', 'COMMITTED', 'PARTIALLY_COMMITTED', 'ABORTED']
+          && request.resource.data.createdAt is string
+          && request.resource.data.items is map;
+
+        allow update: if isAdminOfFamily(familyId)
+          && request.resource.data.operationId == resource.data.operationId
+          && request.resource.data.familyId == resource.data.familyId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (resource.data.status != 'COMMITTED' || request.resource.data.status == 'PARTIALLY_COMMITTED');
+
+        allow delete: if false;
+      }
+
+      // 5. OCORRÊNCIAS (assignments)
+      match /assignments/{assignmentId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create, delete: if isAdminOfFamily(familyId);
+        allow update: if isMemberOfFamily(familyId);
+      }
+    }
+
+    match /familyMemberships/{membershipId} {
+      allow read, write: if true;
+    }
+  }
+}

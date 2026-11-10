@@ -59,6 +59,11 @@ import {
   getDeactivatedMembers, 
   isMemberActive 
 } from '../domain/selectors';
+import { RoutineFeatureFlags } from '../domain/routine/routineFeatureFlags';
+import { RoutineTransactionalService } from '../application/services/RoutineTransactionalService';
+import { FirestoreTransactionalAdapter } from '../infrastructure/firebase/FirestoreTransactionalAdapter';
+import { InMemoryTransactionalStore } from '../domain/routine/inMemoryTransactionalStore';
+import { generateBatchOperationId, buildRoutineIndexKey } from '../domain/routine/multiRoomBatchContracts';
 
 export interface TaskCompletionResult {
   success: boolean;
@@ -2197,6 +2202,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetTmId = data.task_master_id || data.taskMasterId || data.task_id || data.taskId;
     const targetRoomId = data.room_id || data.roomId || 'geral';
 
+    // B.5.5-HF1-D-B2B: Se a feature flag transacional estiver ativa, encaminha ao protocolo transacional unificado
+    if (RoutineFeatureFlags.isTransactionalMultiRoomEnabled(familyId)) {
+      const customTitle = data.customTitle || data.custom_title || data.name;
+      const master = targetTmId ? allMasterTasks.find(tm => tm.id === targetTmId) : undefined;
+      const resolvedDuration =
+        data.estimated_minutes !== undefined &&
+        data.estimated_minutes !== null &&
+        !Number.isNaN(Number(data.estimated_minutes))
+          ? Number(data.estimated_minutes)
+          : (data.estimatedMinutes !== undefined &&
+            data.estimatedMinutes !== null &&
+            !Number.isNaN(Number(data.estimatedMinutes))
+            ? Number(data.estimatedMinutes)
+            : (master?.duration_minutes !== undefined && master.duration_minutes !== null
+              ? Number(master.duration_minutes)
+              : 20));
+
+      const input: BatchAddRoutineInput = {
+        taskMasterId: targetTmId || data.taskId || data.task_id || data.name || 'custom',
+        roomId: targetRoomId,
+        name: customTitle || data.name || 'Rotina',
+        frequency: data.frequency || 'DAILY',
+        preferredDays: data.preferred_days || data.preferredDays,
+        dayOfMonth: data.day_of_month || (data as any).dayOfMonth,
+        startDate: data.start_date || (data as any).startDate,
+        preferredTime: data.preferred_time || data.preferredTime || '09:00',
+        durationMinutes: resolvedDuration,
+        executionTarget: data.executionTarget || 'HOUSEHOLD',
+        domesticSupportId: data.executionTarget === 'HOUSEHOLD' ? null : (data.domesticSupportId ?? null)
+      };
+
+      const batchRes = await batchAddRoutines([input]);
+      const createdRoutineId = batchRes.granularResult?.items[0]?.routineId;
+      if (createdRoutineId) {
+        const found = familyTasks.find(r => r.id === createdRoutineId);
+        if (found) return found;
+      }
+      const match = familyTasks.find(ft => {
+        const ftTmId = ft.task_master_id || ft.taskMasterId || ft.task_id || ft.taskId;
+        const ftRoomId = ft.room_id || ft.roomId || 'geral';
+        return ftTmId === input.taskMasterId && ftRoomId === targetRoomId;
+      });
+      if (match) return match;
+    }
+
     // FASE B.5.1: Unicidade canônica por (task_master_id, room_id).
     // Permite a mesma tarefa em cômodos diferentes, mas impede duplicidade ativa no mesmo cômodo.
     const existingIndex = familyTasks.findIndex(ft => {
@@ -2444,6 +2494,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return t;
     }));
+
+    // B.5.5-HF1-D-B2B: Sincronização de routineIndex ao desativar
+    if (RoutineFeatureFlags.isTransactionalMultiRoomEnabled(familyId) && !isDemoMode && db && authFamily) {
+      try {
+        const dTmId = result.deactivatedRoutine.task_master_id || (result.deactivatedRoutine as any).taskMasterId;
+        const dRoomId = result.deactivatedRoutine.room_id || result.deactivatedRoutine.roomId || 'geral';
+        if (dTmId) {
+          const idxKey = buildRoutineIndexKey(dTmId, dRoomId);
+          const idxRef = doc(db, 'families', familyId, 'routineIndex', idxKey);
+          const idxSnap = await getDoc(idxRef);
+          if (idxSnap.exists()) {
+            await updateDoc(idxRef, {
+              status: 'ARCHIVED',
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+      } catch (idxErr) {
+        console.warn('[AppContext.deactivateRoutine] Falha ao arquivar routineIndex:', idxErr);
+      }
+    }
   };
 
   const reactivateRoutine = async (routineId: string, updates?: Partial<FamilyTask>): Promise<void> => {
@@ -2494,6 +2565,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       setTasks(list);
     }
+
+    // B.5.5-HF1-D-B2B: Sincronização de routineIndex ao reativar
+    if (RoutineFeatureFlags.isTransactionalMultiRoomEnabled(familyId) && !isDemoMode && db && authFamily) {
+      try {
+        const rTmId = result.reactivatedRoutine.task_master_id || (result.reactivatedRoutine as any).taskMasterId;
+        const rRoomId = result.reactivatedRoutine.room_id || result.reactivatedRoutine.roomId || 'geral';
+        if (rTmId) {
+          const idxKey = buildRoutineIndexKey(rTmId, rRoomId);
+          const idxRef = doc(db, 'families', familyId, 'routineIndex', idxKey);
+          const idxSnap = await getDoc(idxRef);
+          if (idxSnap.exists()) {
+            await updateDoc(idxRef, {
+              status: 'ACTIVE',
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+      } catch (idxErr) {
+        console.warn('[AppContext.reactivateRoutine] Falha ao ativar routineIndex:', idxErr);
+      }
+    }
   };
 
   const batchAddRoutines = async (items: BatchAddRoutineInput[]): Promise<BatchAddResult> => {
@@ -2503,6 +2595,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const familyId = authFamily?.id || family.id || 'fam-demo';
     const now = new Date().toISOString();
     const today = getFamilyLocalDate(family.timezone);
+
+    // B.5.5-HF1-D-B2B: Roteamento Transacional sob Feature Flag Controlada
+    if (RoutineFeatureFlags.isTransactionalMultiRoomEnabled(familyId)) {
+      const store = (!isDemoMode && db && authFamily)
+        ? new FirestoreTransactionalAdapter(db)
+        : new InMemoryTransactionalStore();
+
+      const operationId = generateBatchOperationId(familyId);
+      const granular = await RoutineTransactionalService.executeBatchRoutines({
+        familyId,
+        items,
+        operationId,
+        clientSessionId: `client-${Date.now()}`,
+        store,
+        today,
+        timezone: family.timezone
+      });
+
+      // Recarrega estado sincronizado
+      if (!isDemoMode && db && authFamily) {
+        const ftSnap = await getDocs(collection(db, 'families', authFamily.id, 'familyTasks'));
+        const loadedTasks: FamilyTask[] = [];
+        ftSnap.forEach(d => {
+          loadedTasks.push(FirestoreMappers.toFamilyTask(d.id, d.data()));
+        });
+        setFamilyTasks(loadedTasks);
+        await reloadAssignments(loadedTasks);
+      } else {
+        if ('getAllFamilyTasks' in store && typeof (store as any).getAllFamilyTasks === 'function') {
+          const inMemTasks = (store as any).getAllFamilyTasks(familyId);
+          setFamilyTasks(inMemTasks);
+          await reloadAssignments(inMemTasks);
+        } else {
+          await reloadAssignments(familyTasks);
+        }
+      }
+
+      return {
+        added: granular.added,
+        reactivated: granular.reactivated,
+        skipped: granular.skipped,
+        failed: granular.failed,
+        granularResult: granular
+      };
+    }
 
     let addedCount = 0;
     let reactivatedCount = 0;
