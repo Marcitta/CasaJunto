@@ -90,4 +90,5 @@ export interface ITransactionalStore {
   directGetRoutineIndex(familyId: string, indexKey: string): Promise<RoutineIndexDoc | null>;
   directGetFamilyTask(familyId: string, routineId: string): Promise<FamilyTask | null>;
   directGetAssignment(familyId: string, assignmentId: string): Promise<TaskAssignment | null>;
+  ensureContext?(familyId: string): Promise<void>;
 }

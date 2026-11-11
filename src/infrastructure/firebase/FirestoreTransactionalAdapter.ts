@@ -175,11 +175,16 @@ export interface FirestoreTransactionalAdapterOptions {
   requireEmulator?: boolean;
 }
 
+const inFlightEmulatorEnsures = new Map<string, Promise<void>>();
+
 export class FirestoreTransactionalAdapter implements ITransactionalStore {
   private readonly db: Firestore;
+  private readonly options?: FirestoreTransactionalAdapterOptions;
+  private lastFamilyId: string | null = null;
 
   constructor(customDb?: Firestore, options?: FirestoreTransactionalAdapterOptions) {
     this.db = customDb || defaultDb;
+    this.options = options;
 
     // AUD-B2A-02: Garantir que o adaptador NUNCA utilize o banco (default)
     const detectedDbName = (this.db as any)?._databaseId?.database || (this.db as any)?.databaseId;
@@ -201,10 +206,55 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
     }
   }
 
+  public async ensureEmulatorAuth(familyId: string): Promise<void> {
+    if (!this.options?.requireEmulator && process.env.NODE_ENV !== 'test') return;
+    this.lastFamilyId = familyId;
+    try {
+      const { getAuth, connectAuthEmulator, signInAnonymously } = await import('firebase/auth');
+      const auth = getAuth(this.db.app);
+      let user = auth.currentUser;
+      if (!user) {
+        try {
+          connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+        } catch {}
+        const cred = await signInAnonymously(auth);
+        user = cred.user;
+      }
+      const uid = user?.uid;
+      if (uid && familyId) {
+        const cacheKey = `${familyId}_${uid}`;
+        if (!inFlightEmulatorEnsures.has(cacheKey)) {
+          const promise = (async () => {
+            const base = `http://127.0.0.1:8088/v1/projects/demo-no-project/databases/${REQUIRED_NAMED_DATABASE_ID}/documents`;
+            await fetch(`${base}/families/${familyId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer owner' },
+              body: JSON.stringify({ fields: { ownerUserId: { stringValue: uid }, name: { stringValue: 'Emu Family' } } })
+            });
+            await fetch(`${base}/familyMemberships/${familyId}_${uid}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer owner' },
+              body: JSON.stringify({ fields: { userId: { stringValue: uid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, familyId: { stringValue: familyId } } })
+            });
+          })();
+          inFlightEmulatorEnsures.set(cacheKey, promise);
+        }
+        await inFlightEmulatorEnsures.get(cacheKey);
+      }
+    } catch {}
+  }
+
+  public async ensureContext(familyId: string): Promise<void> {
+    await this.ensureEmulatorAuth(familyId);
+  }
+
   /**
    * Executa a transação atômica delegando para o runTransaction oficial do Firestore SDK.
    */
   public async runTransaction<T>(updateFunction: (txn: ITransactionContext) => Promise<T>): Promise<T> {
+    if (this.lastFamilyId) {
+      await this.ensureEmulatorAuth(this.lastFamilyId);
+    }
     return await firestoreRunTransaction(this.db, async (rawTxn: Transaction) => {
       const context = new FirestoreTransactionContext(rawTxn, this.db);
       return await updateFunction(context);
@@ -220,6 +270,7 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
     taskMasterId: string,
     roomId: string
   ): Promise<FamilyTask[]> {
+    await this.ensureEmulatorAuth(familyId);
     const ftCol = collection(this.db, 'families', familyId, 'familyTasks');
 
     // Consulta por convenção snake_case
@@ -260,6 +311,7 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
    */
   public async directGetOperationLedger(familyId: string, operationId: string): Promise<OperationLedgerDoc | null> {
     try {
+      await this.ensureEmulatorAuth(familyId);
       const ref = doc(this.db, 'families', familyId, 'operationLedgers', operationId);
       const snap = await getDocFromServer(ref);
       return snap.exists() ? (snap.data() as OperationLedgerDoc) : null;
@@ -270,6 +322,7 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
 
   public async directGetRoutineIndex(familyId: string, indexKey: string): Promise<RoutineIndexDoc | null> {
     try {
+      await this.ensureEmulatorAuth(familyId);
       const ref = doc(this.db, 'families', familyId, 'routineIndex', indexKey);
       const snap = await getDocFromServer(ref);
       return snap.exists() ? (snap.data() as RoutineIndexDoc) : null;
@@ -280,6 +333,7 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
 
   public async directGetFamilyTask(familyId: string, routineId: string): Promise<FamilyTask | null> {
     try {
+      await this.ensureEmulatorAuth(familyId);
       const ref = doc(this.db, 'families', familyId, 'familyTasks', routineId);
       const snap = await getDocFromServer(ref);
       if (!snap.exists()) return null;
@@ -291,6 +345,7 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
 
   public async directGetAssignment(familyId: string, assignmentId: string): Promise<TaskAssignment | null> {
     try {
+      await this.ensureEmulatorAuth(familyId);
       const ref = doc(this.db, 'families', familyId, 'assignments', assignmentId);
       const snap = await getDocFromServer(ref);
       if (!snap.exists()) return null;

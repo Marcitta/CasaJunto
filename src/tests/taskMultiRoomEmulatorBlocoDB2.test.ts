@@ -240,6 +240,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       const originalCreatedAt = '2023-05-10T12:00:00.000Z';
 
       // Seed de rotina legada ativa diretamente no Firestore
+      await adapter.ensureEmulatorAuth(familyId);
       const legacyDocRef = doc(db, 'families', familyId, 'familyTasks', legacyId);
       await setDoc(legacyDocRef, {
         id: legacyId,
@@ -306,6 +307,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       const roomId = 'cozinha';
 
       // Seed de 2 rotinas legadas duplicadas
+      await adapter.ensureEmulatorAuth(familyId);
       const d1Ref = doc(db, 'families', familyId, 'familyTasks', 'dup_1');
       await setDoc(d1Ref, { id: 'dup_1', familyId, taskMasterId, roomId, active: true, createdAt: '2023-01-01T00:00:00Z' });
       const d2Ref = doc(db, 'families', familyId, 'familyTasks', 'dup_2');
@@ -827,6 +829,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       const occId = `${routineId}_${dateStr}`;
 
       // Seed de ocorrência COMPLETED
+      await adapter.ensureEmulatorAuth(familyId);
       const asgRef = doc(db, 'families', familyId, 'assignments', occId);
       await setDoc(asgRef, {
         id: occId,
@@ -894,6 +897,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       const occId = `${routineId}_${dateStr}`;
 
       // Ocorrência atribuída a morador (não vazia)
+      await adapter.ensureEmulatorAuth(familyId);
       const asgRef = doc(db, 'families', familyId, 'assignments', occId);
       await setDoc(asgRef, {
         id: occId,
@@ -962,8 +966,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
 
       // Injeta falha na Fase 2 (sincronização de ocorrências)
       let txnCallCount = 0;
-      const partialStore = {
-        ...adapter,
+      const partialStore = Object.assign(Object.create(adapter), {
         runTransaction: async (fn: any) => {
           txnCallCount++;
           // A chamada 1 é a Fase 1 (rotinas e ledger).
@@ -974,7 +977,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
           // A chamada 3 atualiza o ledger para PARTIALLY_COMMITTED.
           return await adapter.runTransaction(fn);
         }
-      };
+      });
 
       const res = await RoutineTransactionalService.executeBatchRoutines({
         familyId,
@@ -1015,6 +1018,9 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
     try {
       const familyA = `fam_emu16_A_${Date.now()}`;
       const familyB = `fam_emu16_B_${Date.now()}`;
+
+      await adapter.ensureEmulatorAuth(familyA);
+      await adapter.ensureEmulatorAuth(familyB);
 
       await RoutineTransactionalService.executeBatchRoutines({
         familyId: familyA,

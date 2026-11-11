@@ -28,6 +28,7 @@ import {
   detectDuplicatePayloadCombinations,
   sanitizeKeyComponent
 } from '../../domain/routine/multiRoomBatchContracts';
+import { RoutineFeatureFlags } from '../../domain/routine/routineFeatureFlags';
 import { RoutineGenerator } from '../../domain/routine/RoutineGenerator';
 import { RoutineContinuityService } from './RoutineContinuityService';
 import {
@@ -62,6 +63,15 @@ export class RoutineTransactionalService {
 
     const horizonDates = getRollingDateHorizon(today, 15);
     const nowIso = new Date().toISOString();
+
+    // AUD-B2C-03 & AUD-B2C-HF2: Trava de suspensão segura
+    if (RoutineFeatureFlags.isNewWritesSuspended(familyId)) {
+      throw new Error(`[RoutineTransactionalService] Operações de rotinas estão temporariamente suspensas para a família ${familyId}.`);
+    }
+
+    if ('ensureContext' in store && typeof (store as any).ensureContext === 'function') {
+      await (store as any).ensureContext(familyId);
+    }
 
     // 1. Verificação prévia de duplicatas internas no mesmo payload
     const dupCheck = detectDuplicatePayloadCombinations(items);
@@ -674,6 +684,10 @@ export class RoutineTransactionalService {
   }> {
     const { familyId, operationId, items, store } = params;
 
+    if ('ensureContext' in store && typeof (store as any).ensureContext === 'function') {
+      await (store as any).ensureContext(familyId);
+    }
+
     const ledger = await store.directGetOperationLedger(familyId, operationId);
 
     if (ledger && (ledger.status === 'COMMITTED' || ledger.status === 'PARTIALLY_COMMITTED')) {
@@ -782,6 +796,10 @@ export class RoutineTransactionalService {
       store,
       today = getFamilyLocalDate(params.timezone)
     } = params;
+
+    if ('ensureContext' in store && typeof (store as any).ensureContext === 'function') {
+      await (store as any).ensureContext(familyId);
+    }
 
     const routine = await store.directGetFamilyTask(familyId, routineId);
     if (!routine) {

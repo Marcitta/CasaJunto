@@ -2,13 +2,13 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Funções auxiliares para emulador / testes locais
+    // Funções auxiliares com autenticação estrita e guards seguros contra evaluation error
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && request.auth.uid != null;
     }
 
     function isMemberOfFamily(familyId) {
-      return request.auth == null || (isAuthenticated() && exists(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)));
+      return isAuthenticated() ? exists(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) : false;
     }
 
     function membershipDoc(familyId) {
@@ -16,22 +16,39 @@ service cloud.firestore {
     }
 
     function isAdminOfFamily(familyId) {
-      return request.auth == null || (isMemberOfFamily(familyId) && membershipDoc(familyId).data.role == 'ADMIN');
+      return isMemberOfFamily(familyId) ? (membershipDoc(familyId).data.role == 'ADMIN') : false;
     }
 
     function callerMemberId(familyId) {
       return ('memberId' in membershipDoc(familyId).data) ? membershipDoc(familyId).data.memberId : membershipDoc(familyId).data.member_id;
     }
 
+    // Trava persistente de suspensão de rotinas validada no servidor
+    function isRoutinesSuspended(familyId) {
+      return exists(/databases/$(database)/documents/families/$(familyId)) ? (
+        ('routineSuspended' in get(/databases/$(database)/documents/families/$(familyId)).data &&
+         get(/databases/$(database)/documents/families/$(familyId)).data.routineSuspended == true) ||
+        ('routinesSuspended' in get(/databases/$(database)/documents/families/$(familyId)).data &&
+         get(/databases/$(database)/documents/families/$(familyId)).data.routinesSuspended == true)
+      ) : false;
+    }
+
     // Regras de Base do Tenant
     match /families/{familyId} {
       allow read: if isMemberOfFamily(familyId);
-      allow write: if isAdminOfFamily(familyId);
+      // Criação inicial legítima da família: validação mútua atômica com o primeiro vínculo ADMIN
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerUserId == request.auth.uid &&
+        existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
+        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
+        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
+      allow update: if isAdminOfFamily(familyId);
+      allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
 
-      // 1. ROTINAS (familyTasks)
+      // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas
       match /familyTasks/{familyTaskId} {
         allow read: if isMemberOfFamily(familyId);
-        allow write: if isAdminOfFamily(familyId);
+        allow create, update, delete: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
       }
 
       // 2. ÍNDICE CANÔNICO DE ROTINAS MULTIAMBIENTE (routineIndex)
@@ -39,6 +56,7 @@ service cloud.firestore {
         allow read: if isMemberOfFamily(familyId);
 
         allow create: if isAdminOfFamily(familyId)
+          && !isRoutinesSuspended(familyId)
           && request.resource.data.taskMasterId is string
           && request.resource.data.roomId is string
           && request.resource.data.canonicalRoutineId is string
@@ -59,6 +77,7 @@ service cloud.firestore {
           );
 
         allow update: if isAdminOfFamily(familyId)
+          && !isRoutinesSuspended(familyId)
           // Imutabilidade estrita da identidade
           && request.resource.data.canonicalRoutineId == resource.data.canonicalRoutineId
           && request.resource.data.taskMasterId == resource.data.taskMasterId
@@ -106,6 +125,7 @@ service cloud.firestore {
         allow read: if isMemberOfFamily(familyId);
 
         allow create: if isAdminOfFamily(familyId)
+          && !isRoutinesSuspended(familyId)
           && request.resource.data.operationId == operationId
           && request.resource.data.familyId == familyId
           && request.resource.data.status in ['IN_FLIGHT', 'COMMITTED', 'PARTIALLY_COMMITTED', 'ABORTED']
@@ -116,6 +136,7 @@ service cloud.firestore {
           && request.resource.data.operationId == resource.data.operationId
           && request.resource.data.familyId == resource.data.familyId
           && request.resource.data.createdAt == resource.data.createdAt
+          && (!isRoutinesSuspended(familyId) || request.resource.data.status == 'ABORTED')
           && (resource.data.status != 'COMMITTED' || request.resource.data.status == 'PARTIALLY_COMMITTED');
 
         allow delete: if false;
@@ -129,8 +150,41 @@ service cloud.firestore {
       }
     }
 
+    // VÍNCULOS TOP-LEVEL (familyMemberships)
+    // Impede rigorosamente autoelevação e fabricação de vínculos
     match /familyMemberships/{membershipId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.user_id == request.auth.uid ||
+        isMemberOfFamily(resource.data.familyId) ||
+        isMemberOfFamily(resource.data.family_id)
+      );
+
+      allow create: if isAuthenticated() && (
+        // Caso 1: Criação da primeira família e primeiro ADMIN legítimo (validação mútua atômica)
+        (
+          membershipId == request.resource.data.familyId + '_' + request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.role == 'ADMIN' &&
+          request.resource.data.status == 'ACTIVE' &&
+          existsAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)) &&
+          getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.ownerUserId == request.auth.uid
+        ) ||
+        // Caso 2: ADMIN existente adicionando novo membro
+        isAdminOfFamily(request.resource.data.familyId)
+      );
+
+      allow update: if isAuthenticated() && (
+        // Apenas ADMIN existente pode alterar vínculos, e NUNCA pode alterar familyId nem userId
+        isAdminOfFamily(resource.data.familyId) &&
+        request.resource.data.familyId == resource.data.familyId &&
+        request.resource.data.userId == resource.data.userId
+      );
+
+      allow delete: if isAuthenticated() && (
+        isAdminOfFamily(resource.data.familyId) ||
+        resource.data.userId == request.auth.uid
+      );
     }
   }
 }

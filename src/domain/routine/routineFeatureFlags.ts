@@ -16,6 +16,7 @@ export interface RoutineFeatureFlagsConfig {
 
 let inMemoryFlagOverride: boolean | null = null;
 const familySpecificOverrides = new Map<string, boolean>();
+const suspendedFamilies = new Set<string>();
 
 export const RoutineFeatureFlags = {
   /**
@@ -66,10 +67,30 @@ export const RoutineFeatureFlags = {
   },
 
   /**
+   * Verifica se novas escritas de rotinas estão suspensas para a família (Safe Suspension Strategy - AUD-B2C-03).
+   */
+  isNewWritesSuspended(familyId?: string): boolean {
+    if (!familyId) return false;
+    return suspendedFamilies.has(familyId);
+  },
+
+  /**
+   * Suspende ou reativa novas escritas para uma família durante procedimento de rollback ou manutenção segura.
+   */
+  suspendNewWrites(familyId: string, suspended: boolean): void {
+    if (suspended) {
+      suspendedFamilies.add(familyId);
+    } else {
+      suspendedFamilies.delete(familyId);
+    }
+  },
+
+  /**
    * Reseta todas as configurações e overrides de feature flag para o padrão seguro.
    */
   reset(): void {
     inMemoryFlagOverride = null;
     familySpecificOverrides.clear();
+    suspendedFamilies.clear();
   }
 };

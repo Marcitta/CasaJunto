@@ -94,6 +94,7 @@ console.log('================================================================\n'
 let totalTests = 0;
 let totalPassed = 0;
 let totalFailed = 0;
+let totalBlocked = 0;
 
 // 1. Task Catalog
 console.log('--- GRUPO 1: TASK CATALOG (10 TESTES) ---');
@@ -1256,8 +1257,8 @@ for (const s of emuSuite.scenarios) {
     totalPassed++;
     console.log(`[✓ PASS] ${s.id}: ${s.name}`);
   } else if (s.status === 'BLOCKED') {
-    emuBlockedCount++;
-    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name}`);
+    totalBlocked++;
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name} - ${s.reason || s.details || ''}`);
   } else {
     totalTests++;
     totalFailed++;
@@ -1279,7 +1280,8 @@ for (const s of b2bSuite.scenarios) {
     totalPassed++;
     console.log(`[✓ PASS] ${s.id}: ${s.name}`);
   } else if (s.status === 'BLOCKED') {
-    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name}`);
+    totalBlocked++;
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name} - ${s.details || ''}`);
   } else {
     totalTests++;
     totalFailed++;
@@ -1287,8 +1289,8 @@ for (const s of b2bSuite.scenarios) {
   }
 }
 
-// 88. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (12 CENÁRIOS: B2C-01 - B2C-12)
-console.log('\n--- GRUPO 88: FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (B2C-01 - B2C-12) ---');
+// 88. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (16 CENÁRIOS: B2C-01 - B2C-16)
+console.log('\n--- GRUPO 88: FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (B2C-01 - B2C-16) ---');
 const b2cSuite = await runTaskMultiRoomGateSecurityCoexistenceB2CTests();
 console.log(`B2C GATE STATUS: ${b2cSuite.status}`);
 console.log(`B2C GATE DIAGNOSTIC: ${b2cSuite.summary}`);
@@ -1298,7 +1300,8 @@ for (const s of b2cSuite.scenarios) {
     totalPassed++;
     console.log(`[✓ PASS] ${s.id}: ${s.name}`);
   } else if (s.status === 'BLOCKED') {
-    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name}`);
+    totalBlocked++;
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name} - ${s.details || ''}`);
   } else {
     totalTests++;
     totalFailed++;
@@ -1308,13 +1311,15 @@ for (const s of b2cSuite.scenarios) {
 
 console.log('\n================================================================');
 console.log('RESUMO DA SUÍTE INTEGRADA:');
-console.log(`TOTAL TESTS: ${totalTests}`);
-console.log(`TOTAL PASS:  ${totalPassed}`);
-console.log(`TOTAL FAIL:  ${totalFailed}`);
-console.log('STATUS: ' + (totalFailed === 0 ? 'TODOS OS TESTES PASSARAM COM SUCESSO!' : 'FALHA'));
+console.log(`TOTAL TESTS:   ${totalTests}`);
+console.log(`TOTAL PASS:    ${totalPassed}`);
+console.log(`TOTAL FAIL:    ${totalFailed}`);
+console.log(`TOTAL BLOCKED: ${totalBlocked}`);
+const isSuccess = totalFailed === 0 && totalBlocked === 0;
+console.log('STATUS: ' + (isSuccess ? 'TODOS OS TESTES PASSARAM COM SUCESSO!' : 'FALHA / GATE BLOQUEADO'));
 console.log('================================================================');
 
-if (totalFailed > 0) {
+if (!isSuccess) {
   process.exit(1);
 } else {
   process.exit(0);

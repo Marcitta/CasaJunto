@@ -2596,6 +2596,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const now = new Date().toISOString();
     const today = getFamilyLocalDate(family.timezone);
 
+    // AUD-B2C-03 & AUD-B2C-HF2: Suspensão Segura de Novas Escritas (Persistente no Banco e Memória)
+    if (
+      RoutineFeatureFlags.isNewWritesSuspended(familyId) ||
+      (family as any)?.routineSuspended === true ||
+      (authFamily as any)?.routineSuspended === true
+    ) {
+      throw new Error('Operações de rotinas estão temporariamente suspensas para manutenção segura nesta família.');
+    }
+
     // B.5.5-HF1-D-B2B: Roteamento Transacional sob Feature Flag Controlada
     if (RoutineFeatureFlags.isTransactionalMultiRoomEnabled(familyId)) {
       const store = (!isDemoMode && db && authFamily)

@@ -134,6 +134,7 @@ export async function runTaskMultiRoomControlledIntegrationB2BTests(): Promise<{
       }
 
       // Simulação do comportamento legado: cria FamilyTask diretamente sem routineIndex
+      await adapter.ensureEmulatorAuth(testFamId);
       const routineId = `ft_legacy_${Date.now()}`;
       const ftRef = doc(db, 'families', testFamId, 'familyTasks', routineId);
       await setDoc(ftRef, {
@@ -423,6 +424,7 @@ export async function runTaskMultiRoomControlledIntegrationB2BTests(): Promise<{
       };
 
       // Dispara 2 sessões simultâneas concorrentes com IDs de sessão e operação distintos
+      await adapter.ensureEmulatorAuth(testFamId);
       const op1 = generateBatchOperationId(testFamId);
       const op2 = generateBatchOperationId(testFamId);
 
@@ -539,8 +541,7 @@ export async function runTaskMultiRoomControlledIntegrationB2BTests(): Promise<{
       };
 
       let txnCallCount = 0;
-      const failingStore = {
-        ...adapter,
+      const failingStore = Object.assign(Object.create(adapter), {
         runTransaction: async (fn: any) => {
           txnCallCount++;
           // A chamada 1 é a Fase 1 (rotinas e ledger)
@@ -550,7 +551,7 @@ export async function runTaskMultiRoomControlledIntegrationB2BTests(): Promise<{
           }
           return await adapter.runTransaction(fn);
         }
-      };
+      });
 
       const partialRes = await RoutineTransactionalService.executeBatchRoutines({
         familyId: testFamId,
@@ -648,6 +649,9 @@ export async function runTaskMultiRoomControlledIntegrationB2BTests(): Promise<{
     try {
       const famAlpha = `fam_alpha_${Date.now()}`;
       const famBeta = `fam_beta_${Date.now()}`;
+
+      await adapter.ensureEmulatorAuth(famAlpha);
+      await adapter.ensureEmulatorAuth(famBeta);
 
       RoutineFeatureFlags.setFamilyTransactionalOverride(famAlpha, true);
       RoutineFeatureFlags.setFamilyTransactionalOverride(famBeta, true);
