@@ -23,6 +23,17 @@ service cloud.firestore {
       return ('memberId' in membershipDoc(familyId).data) ? membershipDoc(familyId).data.memberId : membershipDoc(familyId).data.member_id;
     }
 
+    function assignmentMemberId(data) {
+      return ('member_id' in data && data.member_id != null && data.member_id != '') ? data.member_id :
+             (('memberId' in data && data.memberId != null && data.memberId != '') ? data.memberId : null);
+    }
+
+    function isAssignmentUnassigned(data) {
+      return assignmentMemberId(data) == null ||
+             ('is_unassigned' in data && data.is_unassigned == true) ||
+             ('isUnassigned' in data && data.isUnassigned == true);
+    }
+
     // Trava persistente de suspensão de rotinas validada no servidor
     function isRoutinesSuspended(familyId) {
       return exists(/databases/$(database)/documents/families/$(familyId)) ? (
@@ -42,13 +53,39 @@ service cloud.firestore {
         existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
         getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
         getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
-      allow update: if isAdminOfFamily(familyId);
+      // Atualização de dados da família:
+      // Apenas ADMIN pode atualizar.
+      // Se a família estiver suspensa (routineSuspended == true), desativar a suspensão
+      // (passar para routineSuspended == false) é ESTRITAMENTE BLOQUEADO para escritas diretas
+      // e EXIGE comprovação atômica de registro de auditoria aprovado (AUDIT_PASSED).
+      allow update: if isAdminOfFamily(familyId) && (
+        // Caso A: Ativação rápida de suspensão ou atualização regular enquanto não suspensa
+        (!('routineSuspended' in resource.data) || resource.data.routineSuspended != true || request.resource.data.routineSuspended == true) ||
+        // Caso B: Liberação de suspensão com prova de auditoria no servidor (atômica e protegida contra replay)
+        (
+          request.resource.data.routineSuspended == false &&
+          ('routineReleaseAuditId' in request.resource.data) &&
+          request.resource.data.routineReleaseAuditId is string &&
+          !exists(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)) &&
+          existsAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)) &&
+          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.status == 'AUDIT_PASSED' &&
+          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.performedBy == request.auth.uid &&
+          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.totalDiscrepancies == 0 &&
+          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.familyId == familyId
+        )
+      );
       allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
 
-      // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas
+      // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas (exceto reconciliação administrativa)
       match /familyTasks/{familyTaskId} {
         allow read: if isMemberOfFamily(familyId);
-        allow create, update, delete: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
+        allow create: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
+        allow update: if isAdminOfFamily(familyId) && (
+          !isRoutinesSuspended(familyId) ||
+          request.resource.data.active == false ||
+          ('isReconciliation' in request.resource.data && request.resource.data.isReconciliation == true)
+        );
+        allow delete: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
       }
 
       // 2. ÍNDICE CANÔNICO DE ROTINAS MULTIAMBIENTE (routineIndex)
@@ -56,7 +93,7 @@ service cloud.firestore {
         allow read: if isMemberOfFamily(familyId);
 
         allow create: if isAdminOfFamily(familyId)
-          && !isRoutinesSuspended(familyId)
+          && (!isRoutinesSuspended(familyId) || ('isReconciliation' in request.resource.data && request.resource.data.isReconciliation == true))
           && request.resource.data.taskMasterId is string
           && request.resource.data.roomId is string
           && request.resource.data.canonicalRoutineId is string
@@ -77,7 +114,7 @@ service cloud.firestore {
           );
 
         allow update: if isAdminOfFamily(familyId)
-          && !isRoutinesSuspended(familyId)
+          && (!isRoutinesSuspended(familyId) || request.resource.data.status == 'ARCHIVED' || ('isReconciliation' in request.resource.data && request.resource.data.isReconciliation == true))
           // Imutabilidade estrita da identidade
           && request.resource.data.canonicalRoutineId == resource.data.canonicalRoutineId
           && request.resource.data.taskMasterId == resource.data.taskMasterId
@@ -142,11 +179,67 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // 5. OCORRÊNCIAS (assignments)
+      // 5. OCORRÊNCIAS (assignments) — Restrições estritas alinhadas com firestore.rules
       match /assignments/{assignmentId} {
         allow read: if isMemberOfFamily(familyId);
         allow create, delete: if isAdminOfFamily(familyId);
-        allow update: if isMemberOfFamily(familyId);
+        allow update: if isMemberOfFamily(familyId) && (
+          isAdminOfFamily(familyId) || (
+            // MEMBER defense-in-depth:
+            // 1. Isolamento estrito de tenant
+            (('family_id' in request.resource.data && request.resource.data.family_id == familyId) ||
+             ('familyId' in request.resource.data && request.resource.data.familyId == familyId)) &&
+            (('family_id' in resource.data && resource.data.family_id == familyId) ||
+             ('familyId' in resource.data && resource.data.familyId == familyId)) &&
+
+            // 2. Imutabilidade da identidade estrutural
+            (!('task_id' in resource.data) || request.resource.data.task_id == resource.data.task_id) &&
+            (!('taskId' in resource.data) || request.resource.data.taskId == resource.data.taskId) &&
+            (!('routineId' in resource.data) || request.resource.data.routineId == resource.data.routineId) &&
+            (!('scheduled_date' in resource.data) || request.resource.data.scheduled_date == resource.data.scheduled_date) &&
+            (!('date' in resource.data) || request.resource.data.date == resource.data.date) &&
+
+            // 3. Proibido reverter tarefa COMPLETED ou DONE
+            resource.data.status != 'COMPLETED' &&
+            resource.data.status != 'DONE' &&
+
+            // 4. Somente transição válida para status COMPLETED ou DONE
+            (request.resource.data.status == 'COMPLETED' || request.resource.data.status == 'DONE') &&
+            (('completed_by' in request.resource.data && request.resource.data.completed_by == callerMemberId(familyId)) ||
+             ('completedBy' in request.resource.data && request.resource.data.completedBy == callerMemberId(familyId))) &&
+            (('completed_at' in request.resource.data) || ('completedAt' in request.resource.data)) &&
+
+            // 5. Autorização do responsável (CASO 1 ou CASO 2):
+            (
+              // CASO 1: Tarefa já atribuída ao próprio morador
+              (
+                assignmentMemberId(resource.data) == callerMemberId(familyId) &&
+                assignmentMemberId(request.resource.data) == callerMemberId(familyId)
+              ) ||
+              // CASO 2: Tarefa não atribuída assumida no ato da conclusão (proatividade)
+              (
+                isAssignmentUnassigned(resource.data) &&
+                assignmentMemberId(request.resource.data) == callerMemberId(familyId)
+              )
+            )
+          )
+        );
+      }
+
+      // 6. REGISTROS DE AUDITORIA DE LIBERAÇÃO DE SUSPENSÃO (routineReleaseAudits)
+      match /routineReleaseAudits/{auditId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create: if isAdminOfFamily(familyId)
+          && request.resource.data.auditId == auditId
+          && request.resource.data.familyId == familyId
+          && request.resource.data.performedBy == request.auth.uid
+          && request.resource.data.status in ['AUDIT_PASSED', 'AUDIT_FAILED']
+          && request.resource.data.totalDiscrepancies is int
+          && (request.resource.data.status != 'AUDIT_PASSED' || request.resource.data.totalDiscrepancies == 0)
+          && request.resource.data.auditedTasksCount is int
+          && request.resource.data.auditedIndexesCount is int
+          && request.resource.data.createdAt is string;
+        allow update, delete: if false; // Imutabilidade do log de auditoria
       }
     }
 

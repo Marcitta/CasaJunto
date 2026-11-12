@@ -225,16 +225,26 @@ export class FirestoreTransactionalAdapter implements ITransactionalStore {
         const cacheKey = `${familyId}_${uid}`;
         if (!inFlightEmulatorEnsures.has(cacheKey)) {
           const promise = (async () => {
-            const base = `http://127.0.0.1:8088/v1/projects/demo-no-project/databases/${REQUIRED_NAMED_DATABASE_ID}/documents`;
-            await fetch(`${base}/families/${familyId}`, {
-              method: 'PATCH',
+            const dbBase = `projects/demo-no-project/databases/${REQUIRED_NAMED_DATABASE_ID}/documents`;
+            await fetch(`http://127.0.0.1:8088/v1/${dbBase}:commit`, {
+              method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer owner' },
-              body: JSON.stringify({ fields: { ownerUserId: { stringValue: uid }, name: { stringValue: 'Emu Family' } } })
-            });
-            await fetch(`${base}/familyMemberships/${familyId}_${uid}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer owner' },
-              body: JSON.stringify({ fields: { userId: { stringValue: uid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, familyId: { stringValue: familyId } } })
+              body: JSON.stringify({
+                writes: [
+                  {
+                    update: {
+                      name: `${dbBase}/families/${familyId}`,
+                      fields: { ownerUserId: { stringValue: uid }, name: { stringValue: 'Emu Family' } }
+                    }
+                  },
+                  {
+                    update: {
+                      name: `${dbBase}/familyMemberships/${familyId}_${uid}`,
+                      fields: { userId: { stringValue: uid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, familyId: { stringValue: familyId } }
+                    }
+                  }
+                ]
+              })
             });
           })();
           inFlightEmulatorEnsures.set(cacheKey, promise);

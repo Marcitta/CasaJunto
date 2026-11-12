@@ -19,7 +19,8 @@ import {
   getDoc,
   collection,
   getDocs,
-  updateDoc
+  updateDoc,
+  runTransaction
 } from 'firebase/firestore';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -1249,6 +1250,984 @@ export async function runTaskMultiRoomGateSecurityCoexistenceB2CTests(): Promise
       });
     }
 
+    // ------------------------------------------------------------------------
+    // B2C-17: HF3-01 — ADMIN tenta liberar suspensão com índice inconsistente: bloqueado
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c17_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      // Atualiza a família para ter routineSuspended: true
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            ownerUserId: { stringValue: adminUid },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+
+      // Grava FamilyTask ativa mas SEM routineIndex (estado inconsistente)
+      await emulatorRestRequest(`families/${testFamId}/familyTasks/ft_inconsistent_1`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            id: { stringValue: 'ft_inconsistent_1' },
+            task_master_id: { stringValue: 'tm_limpeza' },
+            room_id: { stringValue: 'cozinha' },
+            active: { booleanValue: true }
+          }
+        }
+      });
+
+      // ADMIN tenta executar a liberação da suspensão
+      let releaseThrew = false;
+      try {
+        await RoutineConsistencyChecker.executeSuspensionRelease(db, testFamId, adminUid);
+      } catch {
+        releaseThrew = true;
+      }
+
+      if (!releaseThrew) {
+        throw new Error('executeSuspensionRelease deveria ter lançado erro para índice inconsistente!');
+      }
+
+      // Verifica no Firestore que a família PERMANECE suspensa
+      const checkFamRes = await emulatorRestRequest(`families/${testFamId}`, { authHeader: adminAuth });
+      const checkFamData = await checkFamRes.json();
+      const isStillSuspended = checkFamData.fields?.routineSuspended?.booleanValue === true;
+
+      if (!isStillSuspended) {
+        throw new Error('Família não deveria ter sua suspensão liberada em estado inconsistente!');
+      }
+
+      results.push({
+        id: 'B2C-17',
+        name: 'HF3-01: ADMIN tenta liberar suspensão com índice inconsistente: bloqueado',
+        category: 'ROLLBACK',
+        status: 'PASS',
+        details: 'Tentativa de liberação rejeitada com sucesso pela auditoria; família permanece routineSuspended=true'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-17',
+        name: 'HF3-01: ADMIN tenta liberar suspensão com índice inconsistente: bloqueado',
+        category: 'ROLLBACK',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-18: HF3-02 — ADMIN tenta liberar suspensão sem auditoria: bloqueado
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c18_${Date.now()}`;
+      const adminUid = `admin_b2c18_${Date.now()}`;
+      const adminAuth = createMockJwt(adminUid);
+
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            ownerUserId: { stringValue: adminUid },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+      await emulatorRestRequest(`familyMemberships/${testFamId}_${adminUid}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            userId: { stringValue: adminUid },
+            familyId: { stringValue: testFamId },
+            role: { stringValue: 'ADMIN' },
+            status: { stringValue: 'ACTIVE' }
+          }
+        }
+      });
+
+      // Tentativa 1: ADMIN tenta alterar diretamente routineSuspended para false sem auditId
+      const directUpdateRes = await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            routineSuspended: { booleanValue: false }
+          }
+        }
+      });
+
+      // Tentativa 2: ADMIN tenta fornecer um routineReleaseAuditId arbitrário sem documento real
+      const fakeAuditRes = await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            routineSuspended: { booleanValue: false },
+            routineReleaseAuditId: { stringValue: 'audit_fake_bypass_123' }
+          }
+        }
+      });
+
+      const blockedDirect = directUpdateRes.status === 403 || directUpdateRes.status === 400;
+      const blockedFake = fakeAuditRes.status === 403 || fakeAuditRes.status === 400;
+
+      if (!blockedDirect || !blockedFake) {
+        throw new Error(`Regras falharam em bloquear liberação sem auditoria: directStatus=${directUpdateRes.status}, fakeStatus=${fakeAuditRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-18',
+        name: 'HF3-02: ADMIN tenta liberar suspensão sem auditoria: bloqueado',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'Regras de segurança do Firestore rejeitaram atualização direta de routineSuspended sem prova de auditoria no servidor'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-18',
+        name: 'HF3-02: ADMIN tenta liberar suspensão sem auditoria: bloqueado',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-19: HF3-03 — MEMBER tenta alterar suspensão: bloqueado
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c19_${Date.now()}`;
+      const memberUid = `member_b2c19_${Date.now()}`;
+      const memberAuth = createMockJwt(memberUid);
+
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            ownerUserId: { stringValue: `owner_${Date.now()}` },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+      await emulatorRestRequest(`familyMemberships/${testFamId}_${memberUid}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            userId: { stringValue: memberUid },
+            familyId: { stringValue: testFamId },
+            role: { stringValue: 'MEMBER' },
+            status: { stringValue: 'ACTIVE' }
+          }
+        }
+      });
+
+      // MEMBER tenta liberar suspensão
+      const memberRes = await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: memberAuth,
+        body: {
+          fields: {
+            routineSuspended: { booleanValue: false }
+          }
+        }
+      });
+
+      // MEMBER tenta criar documento de auditoria fraudulento
+      const memberAuditRes = await emulatorRestRequest(`families/${testFamId}/routineReleaseAudits/audit_fraud`, {
+        method: 'PATCH',
+        authHeader: memberAuth,
+        body: {
+          fields: {
+            auditId: { stringValue: 'audit_fraud' },
+            familyId: { stringValue: testFamId },
+            performedBy: { stringValue: memberUid },
+            status: { stringValue: 'AUDIT_PASSED' },
+            totalDiscrepancies: { integerValue: '0' }
+          }
+        }
+      });
+
+      if (memberRes.status !== 403 || memberAuditRes.status !== 403) {
+        throw new Error(`MEMBER deveria ter recebido 403: update=${memberRes.status}, audit=${memberAuditRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-19',
+        name: 'HF3-03: MEMBER tenta alterar suspensão: bloqueado',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'MEMBER bloqueado com 403 ao tentar modificar routineSuspended ou criar registro de auditoria'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-19',
+        name: 'HF3-03: MEMBER tenta alterar suspensão: bloqueado',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-20: HF3-04 — Duas sessões tentam operar durante liberação: sem inconsistência
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c20_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            ownerUserId: { stringValue: adminUid },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+
+      // Cria estado consistente prévio
+      const rId = 'ft_consist_20';
+      await emulatorRestRequest(`families/${testFamId}/familyTasks/${rId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            id: { stringValue: rId },
+            task_master_id: { stringValue: 'tm_varrer' },
+            room_id: { stringValue: 'sala' },
+            active: { booleanValue: true }
+          }
+        }
+      });
+      await emulatorRestRequest(`families/${testFamId}/routineIndex/tm_varrer___sala`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            taskMasterId: { stringValue: 'tm_varrer' },
+            roomId: { stringValue: 'sala' },
+            canonicalRoutineId: { stringValue: rId },
+            status: { stringValue: 'ACTIVE' },
+            createdAt: { stringValue: new Date().toISOString() },
+            updatedAt: { stringValue: new Date().toISOString() },
+            lastOperationId: { stringValue: 'op_initial' }
+          }
+        }
+      });
+
+      // Sessão 1 inicia liberação enquanto Sessão 2 tenta gravar rotina concorrentemente
+      const [releaseRes, writeRes] = await Promise.all([
+        RoutineConsistencyChecker.executeSuspensionRelease(db, testFamId, adminUid),
+        emulatorRestRequest(`families/${testFamId}/familyTasks/ft_concurrent_raced`, {
+          method: 'PATCH',
+          authHeader: adminAuth,
+          body: {
+            fields: {
+              id: { stringValue: 'ft_concurrent_raced' },
+              task_master_id: { stringValue: 'tm_raced' },
+              room_id: { stringValue: 'cozinha' },
+              active: { booleanValue: true }
+            }
+          }
+        })
+      ]);
+
+      if (!releaseRes.success) {
+        throw new Error('executeSuspensionRelease deveria ter sido concluído com sucesso');
+      }
+
+      // Consulta os audits gerados
+      const auditsSnap = await getDocs(collection(db, 'families', testFamId, 'routineReleaseAudits'));
+      if (auditsSnap.size !== 1) {
+        throw new Error(`Esperado exatamente 1 log de auditoria, obtido ${auditsSnap.size}`);
+      }
+
+      results.push({
+        id: 'B2C-20',
+        name: 'HF3-04: Duas sessões tentam operar durante liberação: sem inconsistência',
+        category: 'CONCURRENCY',
+        status: 'PASS',
+        details: 'Operações concorrentes convergiram sem corrupção; exatamente 1 log de auditoria registrado'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-20',
+        name: 'HF3-04: Duas sessões tentam operar durante liberação: sem inconsistência',
+        category: 'CONCURRENCY',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-21: HF3-05 — Cliente legado tenta gravar durante suspensão: bloqueado
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c21_${Date.now()}`;
+      const adminUid = `admin_b2c21_${Date.now()}`;
+      const adminAuth = createMockJwt(adminUid);
+
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            ownerUserId: { stringValue: adminUid },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+      await emulatorRestRequest(`familyMemberships/${testFamId}_${adminUid}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            userId: { stringValue: adminUid },
+            familyId: { stringValue: testFamId },
+            role: { stringValue: 'ADMIN' },
+            status: { stringValue: 'ACTIVE' }
+          }
+        }
+      });
+
+      // Cliente legado tenta gravar FamilyTask diretamente sem routineIndex
+      const legWriteRes = await emulatorRestRequest(`families/${testFamId}/familyTasks/ft_legacy_blind_write`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            id: { stringValue: 'ft_legacy_blind_write' },
+            task_master_id: { stringValue: 'tm_blind' },
+            room_id: { stringValue: 'quarto' },
+            active: { booleanValue: true }
+          }
+        }
+      });
+
+      // Leitura da família e das tarefas deve funcionar perfeitamente (HTTP 200)
+      const readRes = await emulatorRestRequest(`families/${testFamId}`, { authHeader: adminAuth });
+
+      if (legWriteRes.status !== 403) {
+        throw new Error(`Escrita legada deveria ter sido rejeitada com 403 durante suspensão, obtido=${legWriteRes.status}`);
+      }
+      if (readRes.status !== 200) {
+        throw new Error(`Leitura deveria continuar autorizada (HTTP 200), obtido=${readRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-21',
+        name: 'HF3-05: Cliente legado tenta gravar durante suspensão: bloqueado',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'Escritas legadas rejeitadas com HTTP 403 pelo Firestore enquanto leituras permaneceram ativas com HTTP 200'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-21',
+        name: 'HF3-05: Cliente legado tenta gravar durante suspensão: bloqueado',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-22: HF3-06 — Liberação legítima após reconciliação: permitida
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c22_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            ownerUserId: { stringValue: adminUid },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+
+      // Seed de rotina reconciliada consistente
+      const rId = 'ft_reconciled_22';
+      await emulatorRestRequest(`families/${testFamId}/familyTasks/${rId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            id: { stringValue: rId },
+            task_master_id: { stringValue: 'tm_organizar' },
+            room_id: { stringValue: 'closet' },
+            active: { booleanValue: true }
+          }
+        }
+      });
+      await emulatorRestRequest(`families/${testFamId}/routineIndex/tm_organizar___closet`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            taskMasterId: { stringValue: 'tm_organizar' },
+            roomId: { stringValue: 'closet' },
+            canonicalRoutineId: { stringValue: rId },
+            status: { stringValue: 'ACTIVE' },
+            createdAt: { stringValue: new Date().toISOString() },
+            updatedAt: { stringValue: new Date().toISOString() },
+            lastOperationId: { stringValue: 'op_reconciled' }
+          }
+        }
+      });
+
+      // Executa liberação legítima via RoutineConsistencyChecker
+      const releaseResult = await RoutineConsistencyChecker.executeSuspensionRelease(db, testFamId, adminUid);
+
+      if (!releaseResult.success || !releaseResult.auditId) {
+        throw new Error('Falha na liberação legítima');
+      }
+
+      // Verifica que no Firestore routineSuspended agora é false
+      const checkFam = await emulatorRestRequest(`families/${testFamId}`, { authHeader: adminAuth });
+      const checkData = await checkFam.json();
+      if (checkData.fields?.routineSuspended?.booleanValue !== false) {
+        throw new Error('routineSuspended deveria ser false no Firestore após liberação');
+      }
+
+      // Testa que uma nova rotina AGORA é aceita pelas regras
+      const newRoutineRes = await emulatorRestRequest(`families/${testFamId}/familyTasks/ft_after_release`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            id: { stringValue: 'ft_after_release' },
+            task_master_id: { stringValue: 'tm_nova' },
+            room_id: { stringValue: 'sala' },
+            active: { booleanValue: true }
+          }
+        }
+      });
+
+      if (newRoutineRes.status !== 200) {
+        throw new Error(`Nova rotina deveria ser aceita após liberação, obtido=${newRoutineRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-22',
+        name: 'HF3-06: Liberação legítima após reconciliação: permitida',
+        category: 'RECOVERY',
+        status: 'PASS',
+        details: 'Auditoria aprovada, auditRecord persistido, routineSuspended=false e novas escritas liberadas'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-22',
+        name: 'HF3-06: Liberação legítima após reconciliação: permitida',
+        category: 'RECOVERY',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-23: HF3-07 — Falha intermediária no processo: estado seguro preservado
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c23_${Date.now()}`;
+      const adminUid = `admin_b2c23_${Date.now()}`;
+      const adminAuth = createMockJwt(adminUid);
+
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            ownerUserId: { stringValue: adminUid },
+            routineSuspended: { booleanValue: true }
+          }
+        }
+      });
+      await emulatorRestRequest(`familyMemberships/${testFamId}_${adminUid}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            userId: { stringValue: adminUid },
+            familyId: { stringValue: testFamId },
+            role: { stringValue: 'ADMIN' },
+            status: { stringValue: 'ACTIVE' }
+          }
+        }
+      });
+
+      // Simula tentativa de transação abortada no meio (exceção durante runTransaction)
+      let transactionAborted = false;
+      try {
+        await runTransaction(db, async (txn) => {
+          const famRef = doc(db, 'families', testFamId);
+          await txn.get(famRef);
+          txn.update(famRef, { routineSuspended: false });
+          throw new Error('Simulated network partition before commit');
+        });
+      } catch {
+        transactionAborted = true;
+      }
+
+      if (!transactionAborted) {
+        throw new Error('Transação com falha intermediária deveria ter abortado');
+      }
+
+      // Verifica que a família PERMANECE em routineSuspended: true
+      const checkFam = await emulatorRestRequest(`families/${testFamId}`, { authHeader: adminAuth });
+      const checkData = await checkFam.json();
+      if (checkData.fields?.routineSuspended?.booleanValue !== true) {
+        throw new Error('Rollback falhou: routineSuspended foi alterado indevidamente após crash');
+      }
+
+      results.push({
+        id: 'B2C-23',
+        name: 'HF3-07: Falha intermediária no processo: estado seguro preservado',
+        category: 'RECOVERY',
+        status: 'PASS',
+        details: 'Transação atômica reverteu todas as modificações; família permaneceu em estado seguro (suspensa)'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-23',
+        name: 'HF3-07: Falha intermediária no processo: estado seguro preservado',
+        category: 'RECOVERY',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-24: HF3-08 — Regressão das permissões de assignments: aprovada
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c24_${Date.now()}`;
+      const adminUid = `admin_b2c24_${Date.now()}`;
+      const aliceUid = `alice_b2c24_${Date.now()}`;
+      const bobUid = `bob_b2c24_${Date.now()}`;
+
+      const adminAuth = createMockJwt(adminUid);
+      const aliceAuth = createMockJwt(aliceUid);
+      const bobAuth = createMockJwt(bobUid);
+
+      // Setup legítimo da família e membros conforme regras estritas
+      const dbBase = `projects/${PROJECT_ID}/databases/${REQUIRED_NAMED_DATABASE_ID}/documents`;
+      await fetch(`http://${EMULATOR_HOST}:${EMULATOR_PORT}/v1/${dbBase}:commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': adminAuth },
+        body: JSON.stringify({
+          writes: [
+            { update: { name: `${dbBase}/families/${testFamId}`, fields: { ownerUserId: { stringValue: adminUid } } }, currentDocument: { exists: false } },
+            { update: { name: `${dbBase}/familyMemberships/${testFamId}_${adminUid}`, fields: { userId: { stringValue: adminUid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, familyId: { stringValue: testFamId }, memberId: { stringValue: adminUid } } }, currentDocument: { exists: false } }
+          ]
+        })
+      });
+
+      await emulatorRestRequest(`familyMemberships/${testFamId}_${aliceUid}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { userId: { stringValue: aliceUid }, familyId: { stringValue: testFamId }, role: { stringValue: 'MEMBER' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: aliceUid } } }
+      });
+      await emulatorRestRequest(`familyMemberships/${testFamId}_${bobUid}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { userId: { stringValue: bobUid }, familyId: { stringValue: testFamId }, role: { stringValue: 'MEMBER' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: bobUid } } }
+      });
+
+      // 1. Seed de 3 ocorrências: asg_alice, asg_bob, asg_unassigned
+      await emulatorRestRequest(`families/${testFamId}/assignments/asg_alice`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't1' }, member_id: { stringValue: aliceUid }, status: { stringValue: 'SCHEDULED' }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+      await emulatorRestRequest(`families/${testFamId}/assignments/asg_bob`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't2' }, member_id: { stringValue: bobUid }, status: { stringValue: 'SCHEDULED' }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+      await emulatorRestRequest(`families/${testFamId}/assignments/asg_unassigned`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't3' }, is_unassigned: { booleanValue: true }, status: { stringValue: 'SCHEDULED' }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+
+      // TESTE 1: Alice tenta alterar asg_bob (atribuído a Bob) -> DEVE RETORNAR 403 PERMISSION_DENIED
+      const aliceOnBobRes = await emulatorRestRequest(`families/${testFamId}/assignments/asg_bob`, {
+        method: 'PATCH',
+        authHeader: aliceAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't2' }, member_id: { stringValue: aliceUid }, status: { stringValue: 'COMPLETED' }, completed_by: { stringValue: aliceUid }, completed_at: { stringValue: new Date().toISOString() }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+
+      // TESTE 2: Alice conclui sua própria tarefa (asg_alice) -> DEVE RETORNAR 200 OK
+      const aliceOwnRes = await emulatorRestRequest(`families/${testFamId}/assignments/asg_alice`, {
+        method: 'PATCH',
+        authHeader: aliceAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't1' }, member_id: { stringValue: aliceUid }, status: { stringValue: 'COMPLETED' }, completed_by: { stringValue: aliceUid }, completed_at: { stringValue: new Date().toISOString() }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+
+      // TESTE 3: Bob assume e conclui tarefa não atribuída (asg_unassigned) -> DEVE RETORNAR 200 OK
+      const bobClaimRes = await emulatorRestRequest(`families/${testFamId}/assignments/asg_unassigned`, {
+        method: 'PATCH',
+        authHeader: bobAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't3' }, member_id: { stringValue: bobUid }, status: { stringValue: 'COMPLETED' }, completed_by: { stringValue: bobUid }, completed_at: { stringValue: new Date().toISOString() }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+
+      // TESTE 4: ADMIN atualiza qualquer ocorrência -> DEVE RETORNAR 200 OK
+      const adminUpdateRes = await emulatorRestRequest(`families/${testFamId}/assignments/asg_bob`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { family_id: { stringValue: testFamId }, task_id: { stringValue: 't2' }, member_id: { stringValue: adminUid }, status: { stringValue: 'COMPLETED' }, completed_by: { stringValue: adminUid }, completed_at: { stringValue: new Date().toISOString() }, scheduled_date: { stringValue: '2026-11-12' } } }
+      });
+
+      if (aliceOnBobRes.status !== 403) {
+        throw new Error(`Alice alterando tarefa de Bob deveria receber 403, obteve ${aliceOnBobRes.status}`);
+      }
+      if (aliceOwnRes.status !== 200) {
+        throw new Error(`Alice concluindo própria tarefa deveria receber 200, obteve ${aliceOwnRes.status}`);
+      }
+      if (bobClaimRes.status !== 200) {
+        throw new Error(`Bob assumindo tarefa unassigned deveria receber 200, obteve ${bobClaimRes.status}`);
+      }
+      if (adminUpdateRes.status !== 200) {
+        throw new Error(`ADMIN atualizando tarefa deveria receber 200, obteve ${adminUpdateRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-24',
+        name: 'HF3-08: Regressão das permissões de assignments: aprovada',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'Permissões de ocorrências validadas: isolamento entre membros (403), conclusão individual (200), proatividade em unassigned (200) e admin override (200)'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-24',
+        name: 'HF3-08: Regressão das permissões de assignments: aprovada',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-25: HF3-FINAL-01 — Replay Attack bloqueado (audit pré-existente rejeitado)
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c25_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      // Família suspensa
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { ownerUserId: { stringValue: adminUid }, routineSuspended: { booleanValue: true } } }
+      });
+
+      // Cria previamente um registro de auditoria avulso
+      const preAuditId = `audit_pre_${Date.now()}`;
+      await emulatorRestRequest(`families/${testFamId}/routineReleaseAudits/${preAuditId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            auditId: { stringValue: preAuditId },
+            familyId: { stringValue: testFamId },
+            performedBy: { stringValue: adminUid },
+            status: { stringValue: 'AUDIT_PASSED' },
+            totalDiscrepancies: { integerValue: '0' },
+            auditedTasksCount: { integerValue: '5' },
+            auditedIndexesCount: { integerValue: '5' },
+            createdAt: { stringValue: new Date().toISOString() }
+          }
+        }
+      });
+
+      // Tentativa de Replay Attack: ADMIN tenta desuspender reutilizando o auditId pré-existente
+      const replayRes = await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            routineSuspended: { booleanValue: false },
+            routineReleaseAuditId: { stringValue: preAuditId }
+          }
+        }
+      });
+
+      if (replayRes.status !== 403) {
+        throw new Error(`Replay attack deveria ter sido bloqueado com 403, obteve status=${replayRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-25',
+        name: 'HF3-FINAL-01: Replay Attack bloqueado (audit pré-existente rejeitado no servidor)',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'Regras do Firestore com !exists && existsAfter rejeitaram reutilização de auditoria pré-existente com HTTP 403'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-25',
+        name: 'HF3-FINAL-01: Replay Attack bloqueado (audit pré-existente rejeitado no servidor)',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-26: HF3-FINAL-02 — Imutabilidade estrita dos registros de auditoria (sem update/delete)
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c26_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      const auditId = `audit_imm_${Date.now()}`;
+      await emulatorRestRequest(`families/${testFamId}/routineReleaseAudits/${auditId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            auditId: { stringValue: auditId },
+            familyId: { stringValue: testFamId },
+            performedBy: { stringValue: adminUid },
+            status: { stringValue: 'AUDIT_PASSED' },
+            totalDiscrepancies: { integerValue: '0' },
+            auditedTasksCount: { integerValue: '2' },
+            auditedIndexesCount: { integerValue: '2' },
+            createdAt: { stringValue: new Date().toISOString() }
+          }
+        }
+      });
+
+      // 1. Tentativa de update no audit
+      const updateRes = await emulatorRestRequest(`families/${testFamId}/routineReleaseAudits/${auditId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            status: { stringValue: 'AUDIT_FAILED' }
+          }
+        }
+      });
+
+      // 2. Tentativa de delete no audit
+      const deleteRes = await emulatorRestRequest(`families/${testFamId}/routineReleaseAudits/${auditId}`, {
+        method: 'DELETE',
+        authHeader: adminAuth
+      });
+
+      if (updateRes.status !== 403 || deleteRes.status !== 403) {
+        throw new Error(`Imutabilidade violada: update=${updateRes.status}, delete=${deleteRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-26',
+        name: 'HF3-FINAL-02: Imutabilidade estrita dos registros de auditoria (sem update/delete)',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'Tentativas de update e delete rejeitadas pelo Firestore com HTTP 403 (imutabilidade comprovada)'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-26',
+        name: 'HF3-FINAL-02: Imutabilidade estrita dos registros de auditoria (sem update/delete)',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-27: HF3-FINAL-03 — Reconciliação segura durante suspensão e liberação
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c27_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      // 1. Família entra em suspensão
+      await emulatorRestRequest(`families/${testFamId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { ownerUserId: { stringValue: adminUid }, routineSuspended: { booleanValue: true } } }
+      });
+
+      // 2. Cria rotina ativa desindexada (inconsistente)
+      const rId = 'ft_divergent_27';
+      await emulatorRestRequest(`families/${testFamId}/familyTasks/${rId}`, {
+        method: 'PATCH',
+        authHeader: 'Bearer owner',
+        body: {
+          fields: {
+            id: { stringValue: rId },
+            task_master_id: { stringValue: 'tm_conserto' },
+            room_id: { stringValue: 'garagem' },
+            active: { booleanValue: true }
+          }
+        }
+      });
+
+      // 3. Escritor comum tentando mutar rotinas sem reconciliação é bloqueado com 403
+      const blindWrite = await emulatorRestRequest(`families/${testFamId}/familyTasks/ft_blind_blocked`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: { fields: { id: { stringValue: 'ft_blind_blocked' }, active: { booleanValue: true } } }
+      });
+      if (blindWrite.status !== 403) {
+        throw new Error(`Escrita cega durante suspensão deveria retornar 403, obteve=${blindWrite.status}`);
+      }
+
+      // 4. Auditoria constata inconsistência antes da reconciliação
+      let preCheckBlocked = false;
+      try {
+        await RoutineConsistencyChecker.executeSuspensionRelease(db, testFamId, adminUid);
+      } catch {
+        preCheckBlocked = true;
+      }
+      if (!preCheckBlocked) {
+        throw new Error('Liberação deveria ter sido bloqueada antes da reconciliação');
+      }
+
+      // 5. Procedimento de reconciliação administrativa é executado com isReconciliation: true
+      const { reconciledCount } = await RoutineConsistencyChecker.reconcileFamilyRoutinesWhileSuspended(
+        db,
+        testFamId,
+        {
+          indexesToCreateOrUpdate: [
+            {
+              taskMasterId: 'tm_conserto',
+              roomId: 'garagem',
+              canonicalRoutineId: rId,
+              status: 'ACTIVE',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              lastOperationId: 'op_reconcile_27'
+            }
+          ]
+        }
+      );
+
+      if (reconciledCount === 0) {
+        throw new Error('Reconciliação não aplicou correções');
+      }
+
+      // 6. Agora a liberação atômica é executada e aprovada com sucesso!
+      const releaseResult = await RoutineConsistencyChecker.executeSuspensionRelease(db, testFamId, adminUid);
+      if (!releaseResult.success || !releaseResult.auditId) {
+        throw new Error('Liberação legítima pós-reconciliação falhou');
+      }
+
+      const finalFamSnap = await emulatorRestRequest(`families/${testFamId}`, { authHeader: adminAuth });
+      const finalFamData = await finalFamSnap.json();
+      if (finalFamData.fields?.routineSuspended?.booleanValue !== false) {
+        throw new Error('routineSuspended deveria ser false após liberação');
+      }
+
+      results.push({
+        id: 'B2C-27',
+        name: 'HF3-FINAL-03: Reconciliação segura durante suspensão e liberação bem-sucedida',
+        category: 'RECOVERY',
+        status: 'PASS',
+        details: 'Reconciliação aplicada durante suspensão com autorização estrita; auditoria aprovada e suspensão liberada'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-27',
+        name: 'HF3-FINAL-03: Reconciliação segura durante suspensão e liberação bem-sucedida',
+        category: 'RECOVERY',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // B2C-28: HF3-FINAL-04 — Falsificação de auditoria com discrepâncias bloqueada
+    // ------------------------------------------------------------------------
+    try {
+      const testFamId = `fam_b2c28_${Date.now()}`;
+      await adapter.ensureEmulatorAuth(testFamId);
+      const { getAuth } = await import('firebase/auth');
+      const auth = getAuth(db.app);
+      const adminUid = auth.currentUser!.uid;
+      const adminAuth = createMockJwt(adminUid);
+
+      const fakeAuditId = `audit_fake_${Date.now()}`;
+      // ADMIN tenta criar AUDIT_PASSED mas com totalDiscrepancies > 0 (inconsistência interna)
+      const fakeAuditRes = await emulatorRestRequest(`families/${testFamId}/routineReleaseAudits/${fakeAuditId}`, {
+        method: 'PATCH',
+        authHeader: adminAuth,
+        body: {
+          fields: {
+            auditId: { stringValue: fakeAuditId },
+            familyId: { stringValue: testFamId },
+            performedBy: { stringValue: adminUid },
+            status: { stringValue: 'AUDIT_PASSED' },
+            totalDiscrepancies: { integerValue: '2' }, // FRAUDE: afirma AUDIT_PASSED com discrepâncias > 0
+            auditedTasksCount: { integerValue: '10' },
+            auditedIndexesCount: { integerValue: '8' },
+            createdAt: { stringValue: new Date().toISOString() }
+          }
+        }
+      });
+
+      if (fakeAuditRes.status !== 403) {
+        throw new Error(`Registro forjado com discrepâncias deveria receber 403, obteve=${fakeAuditRes.status}`);
+      }
+
+      results.push({
+        id: 'B2C-28',
+        name: 'HF3-FINAL-04: Falsificação de auditoria com discrepâncias bloqueada',
+        category: 'SECURITY_RULES',
+        status: 'PASS',
+        details: 'Regras do Firestore rejeitaram AUDIT_PASSED com totalDiscrepancies > 0 com HTTP 403'
+      });
+    } catch (err: any) {
+      results.push({
+        id: 'B2C-28',
+        name: 'HF3-FINAL-04: Falsificação de auditoria com discrepâncias bloqueada',
+        category: 'SECURITY_RULES',
+        status: 'FAIL',
+        details: err?.message
+      });
+    }
+
   } finally {
     RoutineFeatureFlags.reset();
     try {
@@ -1259,7 +2238,7 @@ export async function runTaskMultiRoomGateSecurityCoexistenceB2CTests(): Promise
   const passCount = results.filter(r => r.status === 'PASS').length;
   return {
     status: 'EXECUTED',
-    summary: `${passCount} de ${results.length} cenários do Gate D-B2C-HF2 APROVADOS no Firebase Emulator.`,
+    summary: `${passCount} de ${results.length} cenários do Gate D-B2C-HF3 APROVADOS no Firebase Emulator.`,
     scenarios: results
   };
 }

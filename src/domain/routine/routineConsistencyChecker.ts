@@ -8,9 +8,29 @@
  * 3. Tarefas órfãs ou índices desindexados bloqueiam a liberação.
  */
 
+import {
+  Firestore,
+  collection,
+  doc,
+  getDocs,
+  getDocsFromServer,
+  runTransaction
+} from 'firebase/firestore';
 import { FamilyTask } from '../../types';
 import { RoutineIndexDoc } from './transactionalTypes';
 import { buildRoutineIndexKey } from './multiRoomBatchContracts';
+
+export interface RoutineReleaseAuditRecord {
+  auditId: string;
+  familyId: string;
+  performedBy: string;
+  status: 'AUDIT_PASSED' | 'AUDIT_FAILED';
+  totalDiscrepancies: number;
+  discrepancies: string[];
+  auditedTasksCount: number;
+  auditedIndexesCount: number;
+  createdAt: string;
+}
 
 export interface ConsistencyAuditResult {
   isConsistent: boolean;
@@ -145,4 +165,152 @@ export class RoutineConsistencyChecker {
       );
     }
   }
+
+  /**
+   * Executa ações de reconciliação estrutural enquanto a família está com rotinas suspensas.
+   * Utiliza flags de reconciliação autorizadas pelas regras de segurança.
+   */
+  static async reconcileFamilyRoutinesWhileSuspended(
+    db: Firestore,
+    familyId: string,
+    actions: {
+      indexesToArchive?: string[];
+      indexesToCreateOrUpdate?: RoutineIndexDoc[];
+      tasksToDeactivate?: string[];
+    }
+  ): Promise<{ reconciledCount: number }> {
+    let count = 0;
+    await runTransaction(db, async (txn) => {
+      // 1. Arquivar índices órfãos ou obsoletos
+      if (actions.indexesToArchive) {
+        for (const idxKey of actions.indexesToArchive) {
+          const idxRef = doc(db, 'families', familyId, 'routineIndex', idxKey);
+          txn.update(idxRef, { status: 'ARCHIVED', isReconciliation: true, updatedAt: new Date().toISOString() });
+          count++;
+        }
+      }
+
+      // 2. Criar ou atualizar índices canônicos faltantes
+      if (actions.indexesToCreateOrUpdate) {
+        for (const idxDoc of actions.indexesToCreateOrUpdate) {
+          const key = buildRoutineIndexKey(idxDoc.taskMasterId, idxDoc.roomId);
+          const idxRef = doc(db, 'families', familyId, 'routineIndex', key);
+          txn.set(idxRef, { ...idxDoc, isReconciliation: true, updatedAt: new Date().toISOString() });
+          count++;
+        }
+      }
+
+      // 3. Desativar tarefas divergentes
+      if (actions.tasksToDeactivate) {
+        for (const taskId of actions.tasksToDeactivate) {
+          const taskRef = doc(db, 'families', familyId, 'familyTasks', taskId);
+          txn.update(taskRef, { active: false, isReconciliation: true });
+          count++;
+        }
+      }
+    });
+
+    return { reconciledCount: count };
+  }
+
+  /**
+   * HF3-01 / HF3-02: Executa a auditoria completa e a liberação atômica da suspensão.
+   * 
+   * PROTOCOLO DE RECUPERAÇÃO E LIBERAÇÃO SEGURA:
+   * 1. Consulta integral fresca do servidor das coleções `familyTasks` e `routineIndex`.
+   * 2. Execução da auditoria estrutural bidirecional (auditConsistency).
+   * 3. Se houver qualquer divergência (órfãos, status divergente, desindexados),
+   *    aborta imediatamente lançando erro com a lista de discrepâncias.
+   * 4. Se a auditoria for 100% consistente, executa transação atômica (runTransaction):
+   *    - Grava o documento imutável `/families/{familyId}/routineReleaseAudits/{auditId}`
+   *      com status 'AUDIT_PASSED' e totalDiscrepancies = 0.
+   *    - Atualiza `/families/{familyId}` com routineSuspended = false e o auditId vinculado.
+   * 5. O Firestore Security Rules valida existsAfter, !exists e getAfter no mesmo commit atômico,
+   *    garantindo que registros pré-existentes ou reutilizados (Replay Attack) sejam rejeitados.
+   */
+  static async executeSuspensionRelease(
+    db: Firestore,
+    familyId: string,
+    performedByUid: string
+  ): Promise<{ success: boolean; auditId: string; audit: ConsistencyAuditResult }> {
+    // 1. Consulta integral fresca do servidor (evita cache local)
+    let ftSnap;
+    let idxSnap;
+    try {
+      ftSnap = await getDocsFromServer(collection(db, 'families', familyId, 'familyTasks'));
+      idxSnap = await getDocsFromServer(collection(db, 'families', familyId, 'routineIndex'));
+    } catch {
+      ftSnap = await getDocs(collection(db, 'families', familyId, 'familyTasks'));
+      idxSnap = await getDocs(collection(db, 'families', familyId, 'routineIndex'));
+    }
+
+    const tasks: FamilyTask[] = ftSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const indexes: RoutineIndexDoc[] = idxSnap.docs.map(d => d.data() as RoutineIndexDoc);
+
+    // 2. Auditoria de consistência
+    const audit = this.auditConsistency(tasks, indexes);
+    if (!audit.canSafelyResumeOrRollback) {
+      throw new Error(
+        `[RoutineConsistencyChecker] Liberação de suspensão rejeitada: foram encontradas ${audit.discrepancies.length} discrepâncias estruturais: ${audit.discrepancies.join('; ')}`
+      );
+    }
+
+    const auditId = `audit_rel_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const nowIso = new Date().toISOString();
+
+    const auditRecord: RoutineReleaseAuditRecord = {
+      auditId,
+      familyId,
+      performedBy: performedByUid,
+      status: 'AUDIT_PASSED',
+      totalDiscrepancies: 0,
+      discrepancies: [],
+      auditedTasksCount: tasks.length,
+      auditedIndexesCount: indexes.length,
+      createdAt: nowIso
+    };
+
+    // 3. Liberação atômica com validação de regras no servidor
+    await runTransaction(db, async (txn) => {
+      const famRef = doc(db, 'families', familyId);
+      const famSnap = await txn.get(famRef);
+      if (!famSnap.exists()) {
+        throw new Error(`[RoutineConsistencyChecker] Família '${familyId}' não encontrada no Firestore.`);
+      }
+
+      const auditRef = doc(db, 'families', familyId, 'routineReleaseAudits', auditId);
+      txn.set(auditRef, auditRecord);
+      txn.update(famRef, {
+        routineSuspended: false,
+        routineReleaseAuditId: auditId,
+        routineReleaseAuditAt: nowIso
+      });
+    });
+
+    return { success: true, auditId, audit };
+  }
 }
+
+/**
+ * PROCEDIMENTO OPERACIONAL DE RECUPERAÇÃO APÓS FALHAS / DIVERGÊNCIAS (RUNBOOK):
+ * 
+ * 1. DIAGNÓSTICO:
+ *    - Executar `RoutineConsistencyChecker.auditConsistency(tasks, indexes)`.
+ *    - Analisar os tipos de discrepâncias reportados:
+ *      a) 'Índice órfão': O routineIndex aponta para um FamilyTask que foi excluído ou não existe.
+ *         -> Ação: Arquivar ou remover o routineIndex órfão (`status: 'ARCHIVED'`).
+ *      b) 'FamilyTask ativa desindexada': Uma rotina ativa existe sem routineIndex canônico.
+ *         -> Ação: Criar o routineIndex canônico para (taskMasterId + roomId) apontando para o FamilyTask.
+ *      c) 'Divergência de status': FamilyTask.active != (routineIndex.status === 'ACTIVE').
+ *         -> Ação: Sincronizar o status (desativar a FamilyTask se o índice estiver ARCHIVED, ou atualizar o índice para ACTIVE se a rotina deve estar ativa).
+ *      d) 'Conflito de unicidade': Múltiplas FamilyTasks ativas para a mesma combinação.
+ *         -> Ação: Preservar uma única rotina canônica e arquivar as duplicatas legadas ou registrar em routineIndexConflicts.
+ * 
+ * 2. RECONCILIAÇÃO:
+ *    - Aplicar as correções acima enquanto a família permanece em `routineSuspended: true`.
+ *    - Nenhuma escrita de cliente comum é permitida durante a reconciliação.
+ * 
+ * 3. VALIDAÇÃO E LIBERAÇÃO:
+ *    - Executar `RoutineConsistencyChecker.executeSuspensionRelease(db, familyId, adminUid)`.
+ *    - Somente após o commit atômico do audit record a família voltará a aceitar novas rotinas.
+ */
