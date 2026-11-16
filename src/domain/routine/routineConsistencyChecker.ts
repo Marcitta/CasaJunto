@@ -1,23 +1,27 @@
 /**
- * CasaJunto — B.5.5-HF1-D-B2C-HF2: Verificação de Consistência e Gate de Rollback Seguro
- * 
+ * CasaJunto — B.5.5-HF1-D-B2C-HF3-HF1: Verificação de Consistência e Gate de Rollback Seguro
+ *
  * Garante que:
  * 1. Uma família com rotinas suspensas só pode ter a suspensão liberada ou rollback finalizado
- *    se o estado entre FamilyTask e routineIndex for 100% consistente.
+ *    se o estado entre FamilyTask, routineIndex e routineIndexConflicts for 100% consistente.
  * 2. Nenhuma divergência (ex: FamilyTask.active=false vs routineIndex.status='ACTIVE') passa despercebida.
- * 3. Tarefas órfãs ou índices desindexados bloqueiam a liberação.
+ * 3. AUD-HF3-01: O cliente NUNCA emite AUDIT_PASSED nem altera routineSuspended=false diretamente.
+ *    A liberação exige execução por autoridade confiável no backend (Cloud Function / Admin SDK).
+ * 4. AUD-HF3-02: Captura consistencyVersion do servidor e valida atomicamente contra concorrência.
+ * 5. AUD-HF3-04: Leituras obrigatórias exclusivamente do servidor (getDocFromServer / getDocsFromServer),
+ *    ZERO fallback para cache local (getDoc / getDocs removidos).
  */
 
 import {
   Firestore,
   collection,
   doc,
-  getDocs,
+  getDocFromServer,
   getDocsFromServer,
   runTransaction
 } from 'firebase/firestore';
 import { FamilyTask } from '../../types';
-import { RoutineIndexDoc } from './transactionalTypes';
+import { RoutineIndexDoc, RoutineIndexConflictDoc } from './transactionalTypes';
 import { buildRoutineIndexKey } from './multiRoomBatchContracts';
 
 export interface RoutineReleaseAuditRecord {
@@ -30,6 +34,8 @@ export interface RoutineReleaseAuditRecord {
   auditedTasksCount: number;
   auditedIndexesCount: number;
   consistencyVersion: number;
+  releasedConsistencyVersion?: number;
+  serverVerified?: boolean;
   createdAt: string;
 }
 
@@ -47,23 +53,46 @@ export interface ConsistencyAuditResult {
   };
 }
 
+export type ServerSuspensionReleaseExecutor = (params: {
+  familyId: string;
+  performedByUid: string;
+  expectedConsistencyVersion: number;
+  preflightAudit: ConsistencyAuditResult;
+}) => Promise<{ success: boolean; auditId: string; audit?: ConsistencyAuditResult }>;
+
+let registeredServerReleaseExecutor: ServerSuspensionReleaseExecutor | null = null;
+
 export class RoutineConsistencyChecker {
   /**
-   * Executa auditoria completa entre a coleção de FamilyTasks e routineIndex.
+   * Registra o transport confiável de backend (Cloud Function HTTPS Callable / Admin Service)
+   * responsável pela auditoria transacional no servidor e emissão de AUDIT_PASSED.
+   */
+  static setServerReleaseExecutor(executor: ServerSuspensionReleaseExecutor | null): void {
+    registeredServerReleaseExecutor = executor;
+  }
+
+  /**
+   * Executa auditoria completa entre FamilyTasks, routineIndex e routineIndexConflicts.
    */
   static auditConsistency(
     tasks: FamilyTask[],
-    indexes: RoutineIndexDoc[]
+    indexes: RoutineIndexDoc[],
+    conflicts: RoutineIndexConflictDoc[] = []
   ): ConsistencyAuditResult {
     const discrepancies: string[] = [];
     const taskMap = new Map<string, FamilyTask>();
     tasks.forEach(t => taskMap.set(t.id, t));
 
     const indexByKey = new Map<string, RoutineIndexDoc>();
-    indexes.forEach(idx => {
+    for (const idx of indexes) {
       const key = buildRoutineIndexKey(idx.taskMasterId, idx.roomId);
+      if (indexByKey.has(key)) {
+        discrepancies.push(
+          `Duplicidade de routineIndex: múltiplos índices para '${idx.taskMasterId}___${idx.roomId}'`
+        );
+      }
       indexByKey.set(key, idx);
-    });
+    }
 
     let activeTasks = 0;
     let archivedTasks = 0;
@@ -83,13 +112,14 @@ export class RoutineConsistencyChecker {
     for (const idx of indexes) {
       const task = taskMap.get(idx.canonicalRoutineId);
       if (!task) {
-        discrepancies.push(
-          `Índice órfão: routineIndex '${idx.taskMasterId}___${idx.roomId}' aponta para FamilyTask inexistente '${idx.canonicalRoutineId}'`
-        );
+        if (idx.status !== 'ARCHIVED') {
+          discrepancies.push(
+            `Índice órfão: routineIndex '${idx.taskMasterId}___${idx.roomId}' aponta para FamilyTask inexistente '${idx.canonicalRoutineId}'`
+          );
+        }
         continue;
       }
 
-      // Validar correspondência de taskMasterId e roomId
       const tMasterId = task.taskMasterId || (task as any).task_master_id;
       const tRoomId = task.roomId || (task as any).room_id;
 
@@ -105,7 +135,6 @@ export class RoutineConsistencyChecker {
         );
       }
 
-      // Validar alinhamento de status (ACTIVE <-> active: true; ARCHIVED <-> active: false)
       if (idx.status === 'ACTIVE' && task.active !== true) {
         discrepancies.push(
           `Divergência de status: routineIndex '${idx.taskMasterId}___${idx.roomId}' está ACTIVE, mas FamilyTask '${task.id}' está active=${task.active}`
@@ -117,7 +146,7 @@ export class RoutineConsistencyChecker {
       }
     }
 
-    // 2. Validar se existem FamilyTasks ativas com taskMasterId+roomId sem índice canônico
+    // 2. Validar se existem FamilyTasks ativas com taskMasterId+roomId sem índice canônico ou duplicadas
     for (const task of tasks) {
       const tMasterId = task.taskMasterId || (task as any).task_master_id;
       const tRoomId = task.roomId || (task as any).room_id;
@@ -134,6 +163,15 @@ export class RoutineConsistencyChecker {
             `Conflito de unicidade: FamilyTask ativa '${task.id}' não é a canonicalRoutineId registrada no índice ('${idx.canonicalRoutineId}')`
           );
         }
+      }
+    }
+
+    // 3. Validar se existem conflitos pendentes de resolução
+    for (const conf of conflicts) {
+      if (conf.status === 'PENDING_ADMIN_RESOLUTION') {
+        discrepancies.push(
+          `Conflito pendente de resolução administrativa para '${conf.taskMasterId}___${conf.roomId}'`
+        );
       }
     }
 
@@ -156,10 +194,13 @@ export class RoutineConsistencyChecker {
 
   /**
    * Avalia estritamente se o rollback ou a retomada de escritas podem ser liberados.
-   * Lança erro explícito se houver qualquer discrepância entre FamilyTask e routineIndex.
    */
-  static assertSafeRollbackRelease(tasks: FamilyTask[], indexes: RoutineIndexDoc[]): void {
-    const audit = this.auditConsistency(tasks, indexes);
+  static assertSafeRollbackRelease(
+    tasks: FamilyTask[],
+    indexes: RoutineIndexDoc[],
+    conflicts: RoutineIndexConflictDoc[] = []
+  ): void {
+    const audit = this.auditConsistency(tasks, indexes, conflicts);
     if (!audit.canSafelyResumeOrRollback) {
       throw new Error(
         `[RoutineConsistencyChecker] Rollback/Retomada bloqueada por inconsistência estrutural: ${audit.discrepancies.join('; ')}`
@@ -168,10 +209,66 @@ export class RoutineConsistencyChecker {
   }
 
   /**
+   * AUD-HF3-04: Carrega estado de consistência EXCLUSIVAMENTE do servidor Firestore.
+   * Zero fallback para cache (getDoc / getDocs proibidos). Aborta em erro de rede, timeout ou resposta em cache.
+   */
+  static async fetchServerConsistencyState(
+    db: Firestore,
+    familyId: string
+  ): Promise<{
+    consistencyVersion: number;
+    routineSuspended: boolean;
+    tasks: FamilyTask[];
+    indexes: RoutineIndexDoc[];
+    conflicts: RoutineIndexConflictDoc[];
+  }> {
+    const famDocRef = doc(db, 'families', familyId);
+    const [famSnap, ftSnap, idxSnap, confSnap] = await Promise.all([
+      getDocFromServer(famDocRef),
+      getDocsFromServer(collection(db, 'families', familyId, 'familyTasks')),
+      getDocsFromServer(collection(db, 'families', familyId, 'routineIndex')),
+      getDocsFromServer(collection(db, 'families', familyId, 'routineIndexConflicts'))
+    ]);
+
+    if (
+      famSnap.metadata.fromCache ||
+      ftSnap.metadata.fromCache ||
+      idxSnap.metadata.fromCache ||
+      confSnap.metadata.fromCache
+    ) {
+      throw new Error(
+        '[RoutineConsistencyChecker] AUD-HF3-04: Resposta proveniente de cache local rejeitada. Auditoria exige dados confirmados pelo servidor.'
+      );
+    }
+
+    if (!famSnap.exists()) {
+      throw new Error(`[RoutineConsistencyChecker] Família '${familyId}' não encontrada no servidor.`);
+    }
+
+    const famData = famSnap.data() as Record<string, any>;
+    const consistencyVersion =
+      typeof famData.consistencyVersion === 'number' ? famData.consistencyVersion : 1;
+    const routineSuspended =
+      famData.routineSuspended === true || famData.routinesSuspended === true;
+
+    const tasks: FamilyTask[] = ftSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const indexes: RoutineIndexDoc[] = idxSnap.docs.map(d => d.data() as RoutineIndexDoc);
+    const conflicts: RoutineIndexConflictDoc[] = confSnap.docs.map(
+      d => d.data() as RoutineIndexConflictDoc
+    );
+
+    return {
+      consistencyVersion,
+      routineSuspended,
+      tasks,
+      indexes,
+      conflicts
+    };
+  }
+
+  /**
    * AUD-HF3-03: Executa ações de reconciliação estrutural enquanto a família está com rotinas suspensas.
-   * Restringe os campos estritamente permitidos:
-   * - Índices: somente arquivamento ('ARCHIVED') ou criação para FamilyTask pré-existente.
-   * - Tarefas: somente desativação ('active: false') com campos estruturais imutáveis.
+   * Restringe os campos estritamente permitidos e lê antes de escrever (regra do Firestore Web SDK).
    * Incrementa consistencyVersion da família para invalidar auditorias stale concorrentes (AUD-HF3-02).
    */
   static async reconcileFamilyRoutinesWhileSuspended(
@@ -182,184 +279,157 @@ export class RoutineConsistencyChecker {
       indexesToCreateOrUpdate?: RoutineIndexDoc[];
       tasksToDeactivate?: string[];
     }
-  ): Promise<{ reconciledCount: number }> {
+  ): Promise<{ reconciledCount: number; newConsistencyVersion: number }> {
     let count = 0;
+    let newConsistencyVersion = 2;
+
     await runTransaction(db, async (txn) => {
-      // 1. Arquivar índices órfãos ou obsoletos
+      // ALL READS FIRST
+      const famRef = doc(db, 'families', familyId);
+      const famSnap = await txn.get(famRef);
+      if (!famSnap.exists()) {
+        throw new Error(`[RoutineConsistencyChecker] Família '${familyId}' não encontrada.`);
+      }
+      const famData = famSnap.data() as Record<string, any>;
+      if (famData.routineSuspended !== true && famData.routinesSuspended !== true) {
+        throw new Error(
+          '[RoutineConsistencyChecker] Reconciliação sob suspensão só é permitida com routineSuspended=true.'
+        );
+      }
+
+      const currentVersion =
+        typeof famData.consistencyVersion === 'number' ? famData.consistencyVersion : 1;
+      newConsistencyVersion = currentVersion + 1;
+      const nowIso = new Date().toISOString();
+
+      // ALL WRITES SECOND
+      // 1. Arquivar índices órfãos ou vinculados a tarefas inativas (apenas status + updatedAt)
       if (actions.indexesToArchive) {
         for (const idxKey of actions.indexesToArchive) {
           const idxRef = doc(db, 'families', familyId, 'routineIndex', idxKey);
-          txn.update(idxRef, { status: 'ARCHIVED', updatedAt: new Date().toISOString() });
+          txn.update(idxRef, { status: 'ARCHIVED', updatedAt: nowIso });
           count++;
         }
       }
 
-      // 2. Criar ou atualizar índices canônicos faltantes para tarefas pré-existentes
+      // 2. Criar índices canônicos faltantes para tarefas pré-existentes (somente campos permitidos do schema)
       if (actions.indexesToCreateOrUpdate) {
         for (const idxDoc of actions.indexesToCreateOrUpdate) {
           const key = buildRoutineIndexKey(idxDoc.taskMasterId, idxDoc.roomId);
           const idxRef = doc(db, 'families', familyId, 'routineIndex', key);
-          txn.set(idxRef, { ...idxDoc, updatedAt: new Date().toISOString() });
+          const strictIndexPayload: RoutineIndexDoc = {
+            taskMasterId: idxDoc.taskMasterId,
+            roomId: idxDoc.roomId,
+            canonicalRoutineId: idxDoc.canonicalRoutineId,
+            status: idxDoc.status,
+            createdAt: idxDoc.createdAt || nowIso,
+            updatedAt: nowIso,
+            lastOperationId: idxDoc.lastOperationId,
+            ...(idxDoc.lastOperationType ? { lastOperationType: idxDoc.lastOperationType } : {})
+          };
+          txn.set(idxRef, strictIndexPayload);
           count++;
         }
       }
 
-      // 3. Desativar tarefas divergentes (AUD-HF3-03: somente active: false)
+      // 3. Desativar tarefas divergentes (AUD-HF3-03: somente active: false e updatedAt)
       if (actions.tasksToDeactivate) {
         for (const taskId of actions.tasksToDeactivate) {
           const taskRef = doc(db, 'families', familyId, 'familyTasks', taskId);
-          txn.update(taskRef, { active: false });
+          txn.update(taskRef, { active: false, updatedAt: nowIso });
           count++;
         }
       }
 
       // AUD-HF3-02: Incrementa consistencyVersion da família a cada reconciliação
-      const famRef = doc(db, 'families', familyId);
-      const famSnap = await txn.get(famRef);
-      const currentVersion = famSnap.exists() ? ((famSnap.data() as any).consistencyVersion || 1) : 1;
       txn.update(famRef, {
-        consistencyVersion: currentVersion + 1,
-        lastReconciliationAt: new Date().toISOString()
+        consistencyVersion: newConsistencyVersion,
+        lastReconciliationAt: nowIso
       });
     });
 
-    return { reconciledCount: count };
+    return { reconciledCount: count, newConsistencyVersion };
   }
 
   /**
-   * HF3-01 / HF3-02: Executa a auditoria completa e a liberação atômica da suspensão.
-   * 
-   * AUD-HF3-01: Prova emitida exclusivamente por autoridade confiável de servidor.
-   * AUD-HF3-02: Proteção absoluta contra condição de corrida via consistencyVersion.
-   * AUD-HF3-04: Consulta obrigatória ao servidor com getDocsFromServer (zero fallback para cache).
+   * HF3-01 / HF3-02 / AUD-HF3-01..04:
+   * 1. Executa pré-auditoria estritamente contra o servidor Firestore (SEM cache fallback).
+   * 2. Delega a auditoria autoritativa + emissão de AUDIT_PASSED + liberação para o backend confiável.
+   * 3. NUNCA escreve AUDIT_PASSED nem routineSuspended=false diretamente pelo cliente.
    */
   static async executeSuspensionRelease(
     db: Firestore,
     familyId: string,
     performedByUid: string,
     options?: {
-      trustedAuditorAuth?: string;
-      customConsistencyVersion?: number;
+      serverReleaseExecutor?: ServerSuspensionReleaseExecutor;
     }
   ): Promise<{ success: boolean; auditId: string; audit: ConsistencyAuditResult }> {
-    // 1. AUD-HF3-02: Captura a versão de consistência no início da auditoria
-    const famDocRef = doc(db, 'families', familyId);
-    let famSnap;
-    try {
-      const { getDocFromServer } = await import('firebase/firestore');
-      famSnap = await getDocFromServer(famDocRef);
-    } catch {
-      const { getDoc } = await import('firebase/firestore');
-      famSnap = await getDoc(famDocRef);
-    }
+    // 1. AUD-HF3-04: Consulta obrigatória ao servidor (ZERO fallback para cache)
+    const serverState = await this.fetchServerConsistencyState(db, familyId);
 
-    const capturedVersion = options?.customConsistencyVersion ?? (
-      famSnap.exists() ? ((famSnap.data() as any).consistencyVersion || 1) : 1
+    // 2. Pré-validação estrutural no servidor lido
+    const audit = this.auditConsistency(
+      serverState.tasks,
+      serverState.indexes,
+      serverState.conflicts
     );
-
-    // 2. AUD-HF3-04: Consulta obrigatória ao servidor (SEM fallback permissivo para cache)
-    const ftSnap = await getDocsFromServer(collection(db, 'families', familyId, 'familyTasks'));
-    const idxSnap = await getDocsFromServer(collection(db, 'families', familyId, 'routineIndex'));
-
-    const tasks: FamilyTask[] = ftSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-    const indexes: RoutineIndexDoc[] = idxSnap.docs.map(d => d.data() as RoutineIndexDoc);
-
-    // 3. Auditoria de consistência
-    const audit = this.auditConsistency(tasks, indexes);
     if (!audit.canSafelyResumeOrRollback) {
       throw new Error(
         `[RoutineConsistencyChecker] Liberação de suspensão rejeitada: foram encontradas ${audit.discrepancies.length} discrepâncias estruturais: ${audit.discrepancies.join('; ')}`
       );
     }
 
-    const auditId = `audit_rel_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const nowIso = new Date().toISOString();
-
-    const auditRecord: RoutineReleaseAuditRecord = {
-      auditId,
-      familyId,
-      performedBy: performedByUid,
-      status: 'AUDIT_PASSED',
-      totalDiscrepancies: 0,
-      discrepancies: [],
-      auditedTasksCount: tasks.length,
-      auditedIndexesCount: indexes.length,
-      consistencyVersion: capturedVersion,
-      createdAt: nowIso
-    };
-
-    // 4. Liberação atômica com autoridade confiável de servidor
-    const auditAuth = options?.trustedAuditorAuth || 'Bearer owner';
-    const dbBase = `projects/demo-no-project/databases/${REQUIRED_NAMED_DATABASE_ID}/documents`;
-
-    const commitRes = await fetch(`http://127.0.0.1:8088/v1/${dbBase}:commit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': auditAuth },
-      body: JSON.stringify({
-        writes: [
-          {
-            update: {
-              name: `${dbBase}/families/${familyId}/routineReleaseAudits/${auditId}`,
-              fields: {
-                auditId: { stringValue: auditId },
-                familyId: { stringValue: familyId },
-                status: { stringValue: 'AUDIT_PASSED' },
-                totalDiscrepancies: { integerValue: '0' },
-                auditedTasksCount: { integerValue: String(tasks.length) },
-                auditedIndexesCount: { integerValue: String(indexes.length) },
-                consistencyVersion: { integerValue: String(capturedVersion) },
-                createdAt: { stringValue: nowIso }
-              }
-            },
-            currentDocument: { exists: false }
-          },
-          {
-            update: {
-              name: `${dbBase}/families/${familyId}`,
-              fields: {
-                routineSuspended: { booleanValue: false },
-                routineReleaseAuditId: { stringValue: auditId },
-                routineReleaseAuditAt: { stringValue: nowIso },
-                consistencyVersion: { integerValue: String(capturedVersion) }
-              }
-            }
-          }
-        ]
-      })
-    });
-
-    if (commitRes.status !== 200) {
-      const errBody = await commitRes.json().catch(() => ({}));
+    // 3. AUD-HF3-01: Exige executor confiável no backend (Cloud Function / Firebase Admin SDK)
+    const executor = options?.serverReleaseExecutor || registeredServerReleaseExecutor;
+    if (!executor) {
       throw new Error(
-        `[RoutineConsistencyChecker] Transação de liberação rejeitada pelo servidor Firestore (HTTP ${commitRes.status}): ${JSON.stringify(errBody)}`
+        '[RoutineConsistencyChecker] Liberação bloqueada (AUD-HF3-01): autoridade confiável de servidor (Cloud Function / Admin SDK) não configurada. O cliente não possui permissão para emitir AUDIT_PASSED ou desativar routineSuspended.'
       );
     }
 
-    return { success: true, auditId, audit };
+    const serverRes = await executor({
+      familyId,
+      performedByUid,
+      expectedConsistencyVersion: serverState.consistencyVersion,
+      preflightAudit: audit
+    });
+
+    if (!serverRes?.success || !serverRes?.auditId) {
+      throw new Error(
+        '[RoutineConsistencyChecker] Backend confiável rejeitou a liberação da suspensão.'
+      );
+    }
+
+    return {
+      success: true,
+      auditId: serverRes.auditId,
+      audit: serverRes.audit || audit
+    };
   }
-}
 }
 
 /**
  * PROCEDIMENTO OPERACIONAL DE RECUPERAÇÃO APÓS FALHAS / DIVERGÊNCIAS (RUNBOOK):
- * 
+ *
  * 1. DIAGNÓSTICO:
- *    - Executar `RoutineConsistencyChecker.auditConsistency(tasks, indexes)`.
+ *    - Executar `RoutineConsistencyChecker.fetchServerConsistencyState(db, familyId)` e `auditConsistency(...)`.
  *    - Analisar os tipos de discrepâncias reportados:
  *      a) 'Índice órfão': O routineIndex aponta para um FamilyTask que foi excluído ou não existe.
- *         -> Ação: Arquivar ou remover o routineIndex órfão (`status: 'ARCHIVED'`).
+ *         -> Ação: Arquivar o routineIndex órfão (`status: 'ARCHIVED'`).
  *      b) 'FamilyTask ativa desindexada': Uma rotina ativa existe sem routineIndex canônico.
- *         -> Ação: Criar o routineIndex canônico para (taskMasterId + roomId) apontando para o FamilyTask.
+ *         -> Ação: Criar o routineIndex canônico para (taskMasterId + roomId) apontando para o FamilyTask pré-existente.
  *      c) 'Divergência de status': FamilyTask.active != (routineIndex.status === 'ACTIVE').
- *         -> Ação: Sincronizar o status (desativar a FamilyTask se o índice estiver ARCHIVED, ou atualizar o índice para ACTIVE se a rotina deve estar ativa).
+ *         -> Ação: Sincronizar o status (desativar a FamilyTask se o índice estiver ARCHIVED, ou atualizar o índice para ACTIVE).
  *      d) 'Conflito de unicidade': Múltiplas FamilyTasks ativas para a mesma combinação.
- *         -> Ação: Preservar uma única rotina canônica e arquivar as duplicatas legadas ou registrar em routineIndexConflicts.
- * 
+ *         -> Ação: Preservar uma única rotina canônica e desativar duplicatas ou resolver conflito pendente.
+ *
  * 2. RECONCILIAÇÃO:
- *    - Aplicar as correções acima enquanto a família permanece em `routineSuspended: true`.
- *    - Nenhuma escrita de cliente comum é permitida durante a reconciliação.
- * 
+ *    - Aplicar `reconcileFamilyRoutinesWhileSuspended` enquanto a família permanece em `routineSuspended: true`.
+ *    - Nenhuma criação, exclusão ou mutação arbitrária é permitida durante a suspensão.
+ *    - Cada reconciliação incrementa `consistencyVersion`, invalidando auditorias anteriores concorrentes.
+ *
  * 3. VALIDAÇÃO E LIBERAÇÃO:
- *    - Executar `RoutineConsistencyChecker.executeSuspensionRelease(db, familyId, adminUid)`.
- *    - Somente após o commit atômico do audit record a família voltará a aceitar novas rotinas.
+ *    - Executar `RoutineConsistencyChecker.executeSuspensionRelease(db, familyId, adminUid)` conectado ao backend confiável (`SuspensionReleaseService` / Cloud Function `releaseFamilyRoutineSuspension`).
+ *    - O servidor verifica o token e o papel ADMIN ativo, re-audita as coleções dentro de `adminDb.runTransaction` e emite `AUDIT_PASSED` + `routineSuspended: false` atomicamente.
  */

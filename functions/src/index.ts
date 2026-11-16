@@ -42,6 +42,15 @@ export {
   ProcessRemindersDetail
 } from './services/taskReminderService';
 
+export {
+  SuspensionReleaseService,
+  SuspensionReleaseError,
+  ServerConsistencyAuditResult,
+  ServerRoutineReleaseAuditRecord,
+  ServerSuspensionReleaseParams,
+  ServerSuspensionReleaseResult
+} from './services/suspensionReleaseService';
+
 /**
  * Cloud Function agendada (Scheduler v2).
  * Executa periodicamente a cada 5 minutos no fuso horário canônico America/Sao_Paulo.
