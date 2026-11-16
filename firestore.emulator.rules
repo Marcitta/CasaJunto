@@ -34,6 +34,15 @@ service cloud.firestore {
              ('isUnassigned' in data && data.isUnassigned == true);
     }
 
+    // Autoridade confiável de emissão de auditoria no servidor (AUD-HF3-01)
+    function isTrustedServerAuditor() {
+      return isAuthenticated() && (
+        ('server_auditor' in request.auth.token && request.auth.token.server_auditor == true) ||
+        ('is_server_auditor' in request.auth.token && request.auth.token.is_server_auditor == true) ||
+        (request.auth.uid == 'trusted_server_auditor')
+      );
+    }
+
     // Trava persistente de suspensão de rotinas validada no servidor
     function isRoutinesSuspended(familyId) {
       return exists(/databases/$(database)/documents/families/$(familyId)) ? (
@@ -54,36 +63,51 @@ service cloud.firestore {
         getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
         getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
       // Atualização de dados da família:
-      // Apenas ADMIN pode atualizar.
+      // Apenas ADMIN pode atualizar dados regulares ou ativar a suspensão.
       // Se a família estiver suspensa (routineSuspended == true), desativar a suspensão
-      // (passar para routineSuspended == false) é ESTRITAMENTE BLOQUEADO para escritas diretas
-      // e EXIGE comprovação atômica de registro de auditoria aprovado (AUDIT_PASSED).
-      allow update: if isAdminOfFamily(familyId) && (
-        // Caso A: Ativação rápida de suspensão ou atualização regular enquanto não suspensa
-        (!('routineSuspended' in resource.data) || resource.data.routineSuspended != true || request.resource.data.routineSuspended == true) ||
-        // Caso B: Liberação de suspensão com prova de auditoria no servidor (atômica e protegida contra replay)
+      // (passar para routineSuspended == false) é ESTRITAMENTE BLOQUEADO para clientes comuns
+      // e EXIGE emissor de auditoria confiável do servidor, ausência de replay e consistência de versão.
+      allow update: if (
+        // Caso A: ADMIN da família ativa suspensão rapidamente ou faz atualizações normais quando não suspensa
+        (isAdminOfFamily(familyId) && (!('routineSuspended' in resource.data) || resource.data.routineSuspended != true || request.resource.data.routineSuspended == true)) ||
+        // Caso B: Liberação de suspensão (AUD-HF3-01 e AUD-HF3-02)
+        // Exige emissor de auditoria confiável no servidor, impossibilidade de replay e correspondência de consistencyVersion
         (
           request.resource.data.routineSuspended == false &&
           ('routineReleaseAuditId' in request.resource.data) &&
           request.resource.data.routineReleaseAuditId is string &&
+          // AUD-HF3-01: Proibido para ADMIN/MEMBER comuns — exige autoridade confiável de servidor
+          isTrustedServerAuditor() &&
+          // AUD-HF3-01: Proibido replay de auditoria pré-existente
           !exists(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)) &&
           existsAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)) &&
           getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.status == 'AUDIT_PASSED' &&
-          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.performedBy == request.auth.uid &&
           getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.totalDiscrepancies == 0 &&
-          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.familyId == familyId
+          getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.familyId == familyId &&
+          // AUD-HF3-02: Elimina condição de corrida exigindo que a consistencyVersion coincida
+          (!('consistencyVersion' in resource.data) || !('consistencyVersion' in getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data) || getAfter(/databases/$(database)/documents/families/$(familyId)/routineReleaseAudits/$(request.resource.data.routineReleaseAuditId)).data.consistencyVersion == resource.data.consistencyVersion)
         )
       );
       allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
 
-      // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas (exceto reconciliação administrativa)
+      // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas (exceto reconciliação estrita)
       match /familyTasks/{familyTaskId} {
         allow read: if isMemberOfFamily(familyId);
+        // Criação de novas tarefas é TERMINANTEMENTE PROIBIDA durante suspensão
         allow create: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
+        // Atualização sob suspensão (AUD-HF3-03):
+        // Se a família estiver suspensa, o ADMIN SÓ PODE DESATIVAR uma tarefa ativa existente (active: false).
+        // Nenhuma criação, renomeação, reativação ou alteração arbitrária é permitida (elimina bypass).
         allow update: if isAdminOfFamily(familyId) && (
           !isRoutinesSuspended(familyId) ||
-          request.resource.data.active == false ||
-          ('isReconciliation' in request.resource.data && request.resource.data.isReconciliation == true)
+          (
+            resource.data.active == true &&
+            request.resource.data.active == false &&
+            (!('taskMasterId' in resource.data) || request.resource.data.taskMasterId == resource.data.taskMasterId) &&
+            (!('task_master_id' in resource.data) || request.resource.data.task_master_id == resource.data.task_master_id) &&
+            (!('roomId' in resource.data) || request.resource.data.roomId == resource.data.roomId) &&
+            (!('room_id' in resource.data) || request.resource.data.room_id == resource.data.room_id)
+          )
         );
         allow delete: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
       }
@@ -92,8 +116,14 @@ service cloud.firestore {
       match /routineIndex/{indexKey} {
         allow read: if isMemberOfFamily(familyId);
 
+        // Criação sob suspensão (AUD-HF3-03):
+        // Só é permitida para uma FamilyTask QUE JÁ EXISTE no Firestore prévio (exists),
+        // impedindo a criação de índices para tarefas forjadas ou novas!
         allow create: if isAdminOfFamily(familyId)
-          && (!isRoutinesSuspended(familyId) || ('isReconciliation' in request.resource.data && request.resource.data.isReconciliation == true))
+          && (
+            !isRoutinesSuspended(familyId) ||
+            exists(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId))
+          )
           && request.resource.data.taskMasterId is string
           && request.resource.data.roomId is string
           && request.resource.data.canonicalRoutineId is string
@@ -113,8 +143,14 @@ service cloud.firestore {
             getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.room_id == request.resource.data.roomId
           );
 
+        // Atualização sob suspensão (AUD-HF3-03):
+        // Se a família estiver suspensa, SÓ É PERMITIDO ARQUIVAR o índice (status: 'ARCHIVED').
+        // A identidade do índice é 100% imutável.
         allow update: if isAdminOfFamily(familyId)
-          && (!isRoutinesSuspended(familyId) || request.resource.data.status == 'ARCHIVED' || ('isReconciliation' in request.resource.data && request.resource.data.isReconciliation == true))
+          && (
+            !isRoutinesSuspended(familyId) ||
+            (resource.data.status == 'ACTIVE' && request.resource.data.status == 'ARCHIVED')
+          )
           // Imutabilidade estrita da identidade
           && request.resource.data.canonicalRoutineId == resource.data.canonicalRoutineId
           && request.resource.data.taskMasterId == resource.data.taskMasterId
@@ -229,17 +265,18 @@ service cloud.firestore {
       // 6. REGISTROS DE AUDITORIA DE LIBERAÇÃO DE SUSPENSÃO (routineReleaseAudits)
       match /routineReleaseAudits/{auditId} {
         allow read: if isMemberOfFamily(familyId);
-        allow create: if isAdminOfFamily(familyId)
+        // AUD-HF3-01: Apenas a autoridade confiável de auditoria no servidor pode emitir registros.
+        // Clientes comuns (inclusive ADMIN ou MEMBER da família) são terminantemente proibidos de criar auditorias.
+        allow create: if isTrustedServerAuditor()
           && request.resource.data.auditId == auditId
           && request.resource.data.familyId == familyId
-          && request.resource.data.performedBy == request.auth.uid
           && request.resource.data.status in ['AUDIT_PASSED', 'AUDIT_FAILED']
           && request.resource.data.totalDiscrepancies is int
           && (request.resource.data.status != 'AUDIT_PASSED' || request.resource.data.totalDiscrepancies == 0)
           && request.resource.data.auditedTasksCount is int
           && request.resource.data.auditedIndexesCount is int
           && request.resource.data.createdAt is string;
-        allow update, delete: if false; // Imutabilidade do log de auditoria
+        allow update, delete: if false; // Imutabilidade absoluta do log de auditoria
       }
     }
 

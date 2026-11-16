@@ -67,13 +67,14 @@ async function checkEmulator(): Promise<boolean> {
   }
 }
 
-function createMockJwt(uid: string): string {
+function createMockJwt(uid: string, claims: Record<string, any> = {}): string {
   const h = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
   const p = Buffer.from(JSON.stringify({
     sub: uid,
     user_id: uid,
     aud: PROJECT_ID,
-    iss: `https://securetoken.google.com/${PROJECT_ID}`
+    iss: `https://securetoken.google.com/${PROJECT_ID}`,
+    ...claims
   })).toString('base64url');
   return `Bearer ${h}.${p}.`;
 }
