@@ -1289,8 +1289,8 @@ for (const s of b2bSuite.scenarios) {
   }
 }
 
-// 88. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (36 CENÁRIOS: B2C-01 - B2C-36)
-console.log('\n--- GRUPO 88: FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (B2C-01 - B2C-36) ---');
+// 88. CASA JUNTO — FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (42 CENÁRIOS: B2C-01 - B2C-42)
+console.log('\n--- GRUPO 88: FASE B.5.5-HF1: ETAPA D-B2C — GATE DE SEGURANÇA, COEXISTÊNCIA E RECUPERAÇÃO (B2C-01 - B2C-42) ---');
 const b2cSuite = await runTaskMultiRoomGateSecurityCoexistenceB2CTests();
 console.log(`B2C GATE STATUS: ${b2cSuite.status}`);
 console.log(`B2C GATE DIAGNOSTIC: ${b2cSuite.summary}`);

@@ -17,8 +17,7 @@ import {
   collection,
   doc,
   getDocFromServer,
-  getDocsFromServer,
-  runTransaction
+  getDocsFromServer
 } from 'firebase/firestore';
 import { FamilyTask } from '../../types';
 import { RoutineIndexDoc, RoutineIndexConflictDoc } from './transactionalTypes';
@@ -57,10 +56,21 @@ export type ServerSuspensionReleaseExecutor = (params: {
   familyId: string;
   performedByUid: string;
   expectedConsistencyVersion: number;
+  expectedAuditStateHash: string;
   preflightAudit: ConsistencyAuditResult;
 }) => Promise<{ success: boolean; auditId: string; audit?: ConsistencyAuditResult }>;
 
+export type ServerReconciliationExecutor = (params: {
+  familyId: string;
+  actions: {
+    indexesToArchive?: string[];
+    indexesToCreateOrUpdate?: RoutineIndexDoc[];
+    tasksToDeactivate?: string[];
+  };
+}) => Promise<{ reconciledCount: number; newConsistencyVersion: number }>;
+
 let registeredServerReleaseExecutor: ServerSuspensionReleaseExecutor | null = null;
+let registeredServerReconciliationExecutor: ServerReconciliationExecutor | null = null;
 
 export class RoutineConsistencyChecker {
   /**
@@ -69,6 +79,63 @@ export class RoutineConsistencyChecker {
    */
   static setServerReleaseExecutor(executor: ServerSuspensionReleaseExecutor | null): void {
     registeredServerReleaseExecutor = executor;
+  }
+
+  /**
+   * AUD-HF3-HF2-02: Registra o transport confiável de backend responsável por reconciliações
+   * sob suspensão e incremento exclusivo de consistencyVersion no servidor.
+   */
+  static setServerReconciliationExecutor(executor: ServerReconciliationExecutor | null): void {
+    registeredServerReconciliationExecutor = executor;
+  }
+
+  /**
+   * Calcula digest SHA-256 determinístico idêntico ao servidor sobre todo o estado estrutural auditado.
+   */
+  static async computeAuditStateHash(
+    tasks: Array<Record<string, any> & { id: string }>,
+    indexes: Array<Record<string, any> & { id?: string }>,
+    conflicts: Array<Record<string, any> & { id?: string }> = []
+  ): Promise<string> {
+    const normalizedTasks = tasks
+      .map(t => ({
+        id: String(t.id || ''),
+        active: t.active === true,
+        taskMasterId: String(t.taskMasterId || t.task_master_id || ''),
+        roomId: String(t.roomId || t.room_id || '')
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    const normalizedIndexes = indexes
+      .map(idx => ({
+        docId: String(idx.id || buildRoutineIndexKey(String(idx.taskMasterId || ''), String(idx.roomId || ''))),
+        taskMasterId: String(idx.taskMasterId || ''),
+        roomId: String(idx.roomId || ''),
+        canonicalRoutineId: String(idx.canonicalRoutineId || ''),
+        status: String(idx.status || '')
+      }))
+      .sort((a, b) => a.docId.localeCompare(b.docId));
+
+    const normalizedConflicts = conflicts
+      .map(c => ({
+        docId: String(c.id || buildRoutineIndexKey(String(c.taskMasterId || ''), String(c.roomId || ''))),
+        taskMasterId: String(c.taskMasterId || ''),
+        roomId: String(c.roomId || ''),
+        status: String(c.status || ''),
+        chosenCanonicalRoutineId: String(c.chosenCanonicalRoutineId || '')
+      }))
+      .sort((a, b) => a.docId.localeCompare(b.docId));
+
+    const canonicalPayload = JSON.stringify({
+      tasks: normalizedTasks,
+      indexes: normalizedIndexes,
+      conflicts: normalizedConflicts
+    });
+
+    const data = new TextEncoder().encode(canonicalPayload);
+    const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
   /**
@@ -217,6 +284,7 @@ export class RoutineConsistencyChecker {
     familyId: string
   ): Promise<{
     consistencyVersion: number;
+    auditStateHash: string;
     routineSuspended: boolean;
     tasks: FamilyTask[];
     indexes: RoutineIndexDoc[];
@@ -251,7 +319,17 @@ export class RoutineConsistencyChecker {
     const routineSuspended =
       famData.routineSuspended === true || famData.routinesSuspended === true;
 
-    const tasks: FamilyTask[] = ftSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const tasksWithId = ftSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const indexesWithId = idxSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    const conflictsWithId = confSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+    const auditStateHash = await this.computeAuditStateHash(
+      tasksWithId,
+      indexesWithId,
+      conflictsWithId
+    );
+
+    const tasks: FamilyTask[] = tasksWithId as FamilyTask[];
     const indexes: RoutineIndexDoc[] = idxSnap.docs.map(d => d.data() as RoutineIndexDoc);
     const conflicts: RoutineIndexConflictDoc[] = confSnap.docs.map(
       d => d.data() as RoutineIndexConflictDoc
@@ -259,6 +337,7 @@ export class RoutineConsistencyChecker {
 
     return {
       consistencyVersion,
+      auditStateHash,
       routineSuspended,
       tasks,
       indexes,
@@ -267,95 +346,38 @@ export class RoutineConsistencyChecker {
   }
 
   /**
-   * AUD-HF3-03: Executa ações de reconciliação estrutural enquanto a família está com rotinas suspensas.
-   * Restringe os campos estritamente permitidos e lê antes de escrever (regra do Firestore Web SDK).
-   * Incrementa consistencyVersion da família para invalidar auditorias stale concorrentes (AUD-HF3-02).
+   * AUD-HF3-03 / AUD-HF3-HF2-02:
+   * Delega ações de reconciliação estrutural sob suspensão exclusivamente para a autoridade confiável
+   * de servidor (Admin SDK), garantindo que `consistencyVersion` nunca seja incrementado por clientes.
    */
   static async reconcileFamilyRoutinesWhileSuspended(
-    db: Firestore,
+    _db: Firestore,
     familyId: string,
     actions: {
       indexesToArchive?: string[];
       indexesToCreateOrUpdate?: RoutineIndexDoc[];
       tasksToDeactivate?: string[];
+    },
+    options?: {
+      serverReconciliationExecutor?: ServerReconciliationExecutor;
     }
   ): Promise<{ reconciledCount: number; newConsistencyVersion: number }> {
-    let count = 0;
-    let newConsistencyVersion = 2;
+    const executor = options?.serverReconciliationExecutor || registeredServerReconciliationExecutor;
+    if (!executor) {
+      throw new Error(
+        '[RoutineConsistencyChecker] Reconciliação bloqueada (AUD-HF3-HF2-02): autoridade confiável de servidor (Cloud Function / Admin SDK) não configurada. O cliente não possui permissão para alterar consistencyVersion.'
+      );
+    }
 
-    await runTransaction(db, async (txn) => {
-      // ALL READS FIRST
-      const famRef = doc(db, 'families', familyId);
-      const famSnap = await txn.get(famRef);
-      if (!famSnap.exists()) {
-        throw new Error(`[RoutineConsistencyChecker] Família '${familyId}' não encontrada.`);
-      }
-      const famData = famSnap.data() as Record<string, any>;
-      if (famData.routineSuspended !== true && famData.routinesSuspended !== true) {
-        throw new Error(
-          '[RoutineConsistencyChecker] Reconciliação sob suspensão só é permitida com routineSuspended=true.'
-        );
-      }
-
-      const currentVersion =
-        typeof famData.consistencyVersion === 'number' ? famData.consistencyVersion : 1;
-      newConsistencyVersion = currentVersion + 1;
-      const nowIso = new Date().toISOString();
-
-      // ALL WRITES SECOND
-      // 1. Arquivar índices órfãos ou vinculados a tarefas inativas (apenas status + updatedAt)
-      if (actions.indexesToArchive) {
-        for (const idxKey of actions.indexesToArchive) {
-          const idxRef = doc(db, 'families', familyId, 'routineIndex', idxKey);
-          txn.update(idxRef, { status: 'ARCHIVED', updatedAt: nowIso });
-          count++;
-        }
-      }
-
-      // 2. Criar índices canônicos faltantes para tarefas pré-existentes (somente campos permitidos do schema)
-      if (actions.indexesToCreateOrUpdate) {
-        for (const idxDoc of actions.indexesToCreateOrUpdate) {
-          const key = buildRoutineIndexKey(idxDoc.taskMasterId, idxDoc.roomId);
-          const idxRef = doc(db, 'families', familyId, 'routineIndex', key);
-          const strictIndexPayload: RoutineIndexDoc = {
-            taskMasterId: idxDoc.taskMasterId,
-            roomId: idxDoc.roomId,
-            canonicalRoutineId: idxDoc.canonicalRoutineId,
-            status: idxDoc.status,
-            createdAt: idxDoc.createdAt || nowIso,
-            updatedAt: nowIso,
-            lastOperationId: idxDoc.lastOperationId,
-            ...(idxDoc.lastOperationType ? { lastOperationType: idxDoc.lastOperationType } : {})
-          };
-          txn.set(idxRef, strictIndexPayload);
-          count++;
-        }
-      }
-
-      // 3. Desativar tarefas divergentes (AUD-HF3-03: somente active: false e updatedAt)
-      if (actions.tasksToDeactivate) {
-        for (const taskId of actions.tasksToDeactivate) {
-          const taskRef = doc(db, 'families', familyId, 'familyTasks', taskId);
-          txn.update(taskRef, { active: false, updatedAt: nowIso });
-          count++;
-        }
-      }
-
-      // AUD-HF3-02: Incrementa consistencyVersion da família a cada reconciliação
-      txn.update(famRef, {
-        consistencyVersion: newConsistencyVersion,
-        lastReconciliationAt: nowIso
-      });
-    });
-
-    return { reconciledCount: count, newConsistencyVersion };
+    return await executor({ familyId, actions });
   }
 
   /**
-   * HF3-01 / HF3-02 / AUD-HF3-01..04:
+   * HF3-01 / HF3-02 / AUD-HF3-01..04 / AUD-HF3-HF2-01..02:
    * 1. Executa pré-auditoria estritamente contra o servidor Firestore (SEM cache fallback).
-   * 2. Delega a auditoria autoritativa + emissão de AUDIT_PASSED + liberação para o backend confiável.
-   * 3. NUNCA escreve AUDIT_PASSED nem routineSuspended=false diretamente pelo cliente.
+   * 2. Delega a auditoria autoritativa + emissão de AUDIT_PASSED + liberação para o backend confiável,
+   *    enviando `expectedConsistencyVersion` e `expectedAuditStateHash`.
+   * 3. NUNCA escreve AUDIT_PASSED, consistencyVersion ou routineSuspended=false diretamente pelo cliente.
    */
   static async executeSuspensionRelease(
     db: Firestore,
@@ -392,6 +414,7 @@ export class RoutineConsistencyChecker {
       familyId,
       performedByUid,
       expectedConsistencyVersion: serverState.consistencyVersion,
+      expectedAuditStateHash: serverState.auditStateHash,
       preflightAudit: audit
     });
 

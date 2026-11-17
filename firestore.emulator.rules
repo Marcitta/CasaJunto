@@ -16,7 +16,13 @@ service cloud.firestore {
     }
 
     function isAdminOfFamily(familyId) {
-      return isMemberOfFamily(familyId) ? (membershipDoc(familyId).data.role == 'ADMIN') : false;
+      return isMemberOfFamily(familyId) ? (
+        membershipDoc(familyId).data.role == 'ADMIN' &&
+        (!('status' in membershipDoc(familyId).data) || membershipDoc(familyId).data.status == 'ACTIVE') &&
+        (!('active' in membershipDoc(familyId).data) || membershipDoc(familyId).data.active == true) &&
+        (!('familyId' in membershipDoc(familyId).data) || membershipDoc(familyId).data.familyId == familyId) &&
+        (!('userId' in membershipDoc(familyId).data) || membershipDoc(familyId).data.userId == request.auth.uid)
+      ) : false;
     }
 
     function callerMemberId(familyId) {
@@ -50,25 +56,28 @@ service cloud.firestore {
       // Criação inicial legítima da família: validação mútua atômica com o primeiro vínculo ADMIN
       allow create: if isAuthenticated() &&
         request.resource.data.ownerUserId == request.auth.uid &&
+        !('routineReleaseAuditId' in request.resource.data) &&
+        !('routineReleaseAuditAt' in request.resource.data) &&
+        !('lastReconciliationAt' in request.resource.data) &&
+        (!('consistencyVersion' in request.resource.data) || request.resource.data.consistencyVersion == 1) &&
         existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
         getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
         getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
       // Atualização de dados da família:
       // Apenas ADMIN pode atualizar dados regulares ou ativar a suspensão rapidamente.
-      // AUD-HF3-01 / AUD-HF3-02: NENHUM cliente (nem ADMIN, nem UID especial) pode liberar
-      // routineSuspended: true -> false ou forjar campos de auditoria do servidor.
-      // A liberação ocorre EXCLUSIVAMENTE via backend confiável (Admin SDK / Cloud Function).
+      // AUD-HF3-01 / AUD-HF3-02 / AUD-HF3-HF2-02:
+      // - NENHUM cliente pode liberar routineSuspended: true -> false.
+      // - NENHUM cliente pode modificar, inicializar, incrementar, decrementar ou remover
+      //   consistencyVersion, lastReconciliationAt, routineReleaseAuditId ou routineReleaseAuditAt.
+      // - A modificação desses campos ocorre EXCLUSIVAMENTE via backend confiável (Admin SDK).
       allow update: if isAdminOfFamily(familyId) &&
         (!('ownerUserId' in resource.data) || request.resource.data.ownerUserId == resource.data.ownerUserId) &&
         (!('routineSuspended' in resource.data) || resource.data.routineSuspended != true || (('routineSuspended' in request.resource.data) && request.resource.data.routineSuspended == true)) &&
         (!('routinesSuspended' in resource.data) || resource.data.routinesSuspended != true || (('routinesSuspended' in request.resource.data) && request.resource.data.routinesSuspended == true)) &&
-        (!('routineReleaseAuditId' in request.resource.data) || ('routineReleaseAuditId' in resource.data && request.resource.data.routineReleaseAuditId == resource.data.routineReleaseAuditId)) &&
-        (!('routineReleaseAuditAt' in request.resource.data) || ('routineReleaseAuditAt' in resource.data && request.resource.data.routineReleaseAuditAt == resource.data.routineReleaseAuditAt)) &&
-        (!('consistencyVersion' in request.resource.data) || (
-          ('consistencyVersion' in resource.data)
-            ? (request.resource.data.consistencyVersion == resource.data.consistencyVersion || request.resource.data.consistencyVersion == resource.data.consistencyVersion + 1)
-            : (request.resource.data.consistencyVersion == 1 || request.resource.data.consistencyVersion == 2)
-        ));
+        (!('routineReleaseAuditId' in request.resource.data) ? !('routineReleaseAuditId' in resource.data) : ('routineReleaseAuditId' in resource.data && request.resource.data.routineReleaseAuditId == resource.data.routineReleaseAuditId)) &&
+        (!('routineReleaseAuditAt' in request.resource.data) ? !('routineReleaseAuditAt' in resource.data) : ('routineReleaseAuditAt' in resource.data && request.resource.data.routineReleaseAuditAt == resource.data.routineReleaseAuditAt)) &&
+        (!('lastReconciliationAt' in request.resource.data) ? !('lastReconciliationAt' in resource.data) : ('lastReconciliationAt' in resource.data && request.resource.data.lastReconciliationAt == resource.data.lastReconciliationAt)) &&
+        (!('consistencyVersion' in request.resource.data) ? !('consistencyVersion' in resource.data) : ('consistencyVersion' in resource.data && request.resource.data.consistencyVersion == resource.data.consistencyVersion));
       allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
 
       // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas (exceto reconciliação estrita)

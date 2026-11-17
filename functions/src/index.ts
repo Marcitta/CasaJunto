@@ -48,7 +48,11 @@ export {
   ServerConsistencyAuditResult,
   ServerRoutineReleaseAuditRecord,
   ServerSuspensionReleaseParams,
-  ServerSuspensionReleaseResult
+  ServerSuspensionReleaseResult,
+  ServerReconciliationIndexInput,
+  ServerReconciliationActions,
+  ServerReconciliationParams,
+  ServerReconciliationResult
 } from './services/suspensionReleaseService';
 
 /**
