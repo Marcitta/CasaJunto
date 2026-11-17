@@ -600,11 +600,11 @@ export async function runTaskMultiRoomControlledIntegrationB2BTests(): Promise<{
       const testFamId = `fam_b2b09_${Date.now()}`;
       const memberUid = `uid_member_${Date.now()}`;
 
-      // Configura membership como MEMBER usando privilégios admin/owner
+      // Configura membership como MEMBER canônico usando privilégios admin/owner
       await emulatorRestRequest(`familyMemberships/${testFamId}_${memberUid}`, {
         method: 'PATCH',
         authHeader: 'Bearer owner',
-        body: { fields: { role: { stringValue: 'MEMBER' }, memberId: { stringValue: memberUid } } }
+        body: { fields: { familyId: { stringValue: testFamId }, userId: { stringValue: memberUid }, role: { stringValue: 'MEMBER' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: memberUid } } }
       });
 
       // Tenta criar routineIndex diretamente como MEMBER

@@ -362,11 +362,11 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       const familyId = `fam_emu04_${Date.now()}`;
       const memberUid = `uid_member_${Date.now()}`;
 
-      // Configura membership como MEMBER
+      // Configura membership como MEMBER canônico
       await emulatorRestRequest(`familyMemberships/${familyId}_${memberUid}`, {
         method: 'PATCH',
         authHeader: 'Bearer owner',
-        body: { fields: { role: { stringValue: 'MEMBER' }, memberId: { stringValue: memberUid } } }
+        body: { fields: { familyId: { stringValue: familyId }, userId: { stringValue: memberUid }, role: { stringValue: 'MEMBER' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: memberUid } } }
       });
 
       // Tenta criar routineIndex diretamente como MEMBER
@@ -418,11 +418,11 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       const routineId = 'ft_admin_valid_1';
       const indexKey = `idx_${taskMasterId}___${roomId}`;
 
-      // Configura membership como ADMIN
+      // Configura membership como ADMIN canônico
       await emulatorRestRequest(`familyMemberships/${familyId}_${adminUid}`, {
         method: 'PATCH',
         authHeader: 'Bearer owner',
-        body: { fields: { role: { stringValue: 'ADMIN' }, memberId: { stringValue: adminUid } } }
+        body: { fields: { familyId: { stringValue: familyId }, userId: { stringValue: adminUid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: adminUid } } }
       });
 
       const adminAuth = createMockJwtHeader(adminUid);
@@ -488,7 +488,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       await emulatorRestRequest(`familyMemberships/${familyId}_${adminUid}`, {
         method: 'PATCH',
         authHeader: 'Bearer owner',
-        body: { fields: { role: { stringValue: 'ADMIN' }, memberId: { stringValue: adminUid } } }
+        body: { fields: { familyId: { stringValue: familyId }, userId: { stringValue: adminUid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: adminUid } } }
       });
       const adminAuth = createMockJwtHeader(adminUid);
 
@@ -543,7 +543,7 @@ export async function runTaskMultiRoomEmulatorBlocoDB2Tests(): Promise<{
       await emulatorRestRequest(`familyMemberships/${familyId}_${adminUid}`, {
         method: 'PATCH',
         authHeader: 'Bearer owner',
-        body: { fields: { role: { stringValue: 'ADMIN' }, memberId: { stringValue: adminUid } } }
+        body: { fields: { familyId: { stringValue: familyId }, userId: { stringValue: adminUid }, role: { stringValue: 'ADMIN' }, status: { stringValue: 'ACTIVE' }, memberId: { stringValue: adminUid } } }
       });
       const adminAuth = createMockJwtHeader(adminUid);
 

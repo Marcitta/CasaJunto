@@ -7,22 +7,55 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid != null;
     }
 
-    function isMemberOfFamily(familyId) {
-      return isAuthenticated() ? exists(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) : false;
+    function membershipPath(familyId) {
+      return /databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid);
     }
 
     function membershipDoc(familyId) {
       return get(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid));
     }
 
-    function isAdminOfFamily(familyId) {
-      return isMemberOfFamily(familyId) ? (
-        membershipDoc(familyId).data.role == 'ADMIN' &&
-        (!('status' in membershipDoc(familyId).data) || membershipDoc(familyId).data.status == 'ACTIVE') &&
+    // AUD-HF2.1-01: Contrato canônico estrito de vínculo ativo (sem fallback permissivo para status ou identidade ausentes)
+    function hasValidActiveMembership(familyId) {
+      return isAuthenticated() &&
+        exists(membershipPath(familyId)) &&
+        ('familyId' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.familyId == familyId &&
+        ('userId' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.userId == request.auth.uid &&
+        ('status' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.status == 'ACTIVE' &&
         (!('active' in membershipDoc(familyId).data) || membershipDoc(familyId).data.active == true) &&
-        (!('familyId' in membershipDoc(familyId).data) || membershipDoc(familyId).data.familyId == familyId) &&
-        (!('userId' in membershipDoc(familyId).data) || membershipDoc(familyId).data.userId == request.auth.uid)
-      ) : false;
+        ('role' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.role is string &&
+        membershipDoc(familyId).data.role.size() > 0;
+    }
+
+    function isMemberOfFamily(familyId) {
+      return hasValidActiveMembership(familyId);
+    }
+
+    function isAdminOfFamily(familyId) {
+      return hasValidActiveMembership(familyId) &&
+        membershipDoc(familyId).data.role == 'ADMIN';
+    }
+
+    function isBootstrapOwnerMember(familyId) {
+      return isAuthenticated() &&
+        (('user_id' in request.resource.data && request.resource.data.user_id == request.auth.uid) ||
+         ('userId' in request.resource.data && request.resource.data.userId == request.auth.uid)) &&
+        request.resource.data.role == 'ADMIN' &&
+        (('family_id' in request.resource.data && request.resource.data.family_id == familyId) ||
+         ('familyId' in request.resource.data && request.resource.data.familyId == familyId)) &&
+        existsAfter(/databases/$(database)/documents/families/$(familyId)) &&
+        getAfter(/databases/$(database)/documents/families/$(familyId)).data.ownerUserId == request.auth.uid &&
+        existsAfter(membershipPath(familyId)) &&
+        getAfter(membershipPath(familyId)).data.familyId == familyId &&
+        getAfter(membershipPath(familyId)).data.userId == request.auth.uid &&
+        getAfter(membershipPath(familyId)).data.role == 'ADMIN' &&
+        getAfter(membershipPath(familyId)).data.status == 'ACTIVE' &&
+        (!('active' in getAfter(membershipPath(familyId)).data) ||
+          getAfter(membershipPath(familyId)).data.active == true);
     }
 
     function callerMemberId(familyId) {
@@ -53,16 +86,25 @@ service cloud.firestore {
     // Regras de Base do Tenant
     match /families/{familyId} {
       allow read: if isMemberOfFamily(familyId);
-      // Criação inicial legítima da família: validação mútua atômica com o primeiro vínculo ADMIN
+      // Criação inicial legítima da família: validação mútua atômica com o primeiro vínculo ADMIN ativo canônico
       allow create: if isAuthenticated() &&
+        ('ownerUserId' in request.resource.data) &&
         request.resource.data.ownerUserId == request.auth.uid &&
         !('routineReleaseAuditId' in request.resource.data) &&
         !('routineReleaseAuditAt' in request.resource.data) &&
         !('lastReconciliationAt' in request.resource.data) &&
         (!('consistencyVersion' in request.resource.data) || request.resource.data.consistencyVersion == 1) &&
-        existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
-        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
-        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
+        existsAfter(membershipPath(familyId)) &&
+        ('familyId' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.familyId == familyId &&
+        ('userId' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.userId == request.auth.uid &&
+        ('role' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.role == 'ADMIN' &&
+        ('status' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.status == 'ACTIVE' &&
+        (!('active' in getAfter(membershipPath(familyId)).data) ||
+          getAfter(membershipPath(familyId)).data.active == true);
       // Atualização de dados da família:
       // Apenas ADMIN pode atualizar dados regulares ou ativar a suspensão rapidamente.
       // AUD-HF3-01 / AUD-HF3-02 / AUD-HF3-HF2-02:
@@ -79,6 +121,13 @@ service cloud.firestore {
         (!('lastReconciliationAt' in request.resource.data) ? !('lastReconciliationAt' in resource.data) : ('lastReconciliationAt' in resource.data && request.resource.data.lastReconciliationAt == resource.data.lastReconciliationAt)) &&
         (!('consistencyVersion' in request.resource.data) ? !('consistencyVersion' in resource.data) : ('consistencyVersion' in resource.data && request.resource.data.consistencyVersion == resource.data.consistencyVersion));
       allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
+
+      // 0. MEMBROS DA FAMÍLIA (members) — Alinhado ao bootstrap canônico e RBAC estrito
+      match /members/{memberId} {
+        allow read: if isMemberOfFamily(familyId);
+        allow create: if isAdminOfFamily(familyId) || isBootstrapOwnerMember(familyId);
+        allow update, delete: if isAdminOfFamily(familyId);
+      }
 
       // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas (exceto reconciliação estrita)
       match /familyTasks/{familyTaskId} {
@@ -307,36 +356,44 @@ service cloud.firestore {
     // Impede rigorosamente autoelevação e fabricação de vínculos
     match /familyMemberships/{membershipId} {
       allow read: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid ||
-        resource.data.user_id == request.auth.uid ||
-        isMemberOfFamily(resource.data.familyId) ||
-        isMemberOfFamily(resource.data.family_id)
+        ('userId' in resource.data && resource.data.userId == request.auth.uid) ||
+        ('user_id' in resource.data && resource.data.user_id == request.auth.uid) ||
+        ('familyId' in resource.data && isMemberOfFamily(resource.data.familyId)) ||
+        ('family_id' in resource.data && isMemberOfFamily(resource.data.family_id))
       );
 
       allow create: if isAuthenticated() && (
         // Caso 1: Criação da primeira família e primeiro ADMIN legítimo (validação mútua atômica)
         (
+          ('familyId' in request.resource.data) &&
+          request.resource.data.familyId is string &&
+          request.resource.data.familyId.size() > 0 &&
           membershipId == request.resource.data.familyId + '_' + request.auth.uid &&
+          ('userId' in request.resource.data) &&
           request.resource.data.userId == request.auth.uid &&
+          ('role' in request.resource.data) &&
           request.resource.data.role == 'ADMIN' &&
+          ('status' in request.resource.data) &&
           request.resource.data.status == 'ACTIVE' &&
+          (!('active' in request.resource.data) || request.resource.data.active == true) &&
           existsAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)) &&
+          ('ownerUserId' in getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data) &&
           getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.ownerUserId == request.auth.uid
         ) ||
         // Caso 2: ADMIN existente adicionando novo membro
-        isAdminOfFamily(request.resource.data.familyId)
+        ('familyId' in request.resource.data && request.resource.data.familyId is string && isAdminOfFamily(request.resource.data.familyId))
       );
 
       allow update: if isAuthenticated() && (
         // Apenas ADMIN existente pode alterar vínculos, e NUNCA pode alterar familyId nem userId
-        isAdminOfFamily(resource.data.familyId) &&
-        request.resource.data.familyId == resource.data.familyId &&
-        request.resource.data.userId == resource.data.userId
+        ('familyId' in resource.data && isAdminOfFamily(resource.data.familyId)) &&
+        ('familyId' in request.resource.data && request.resource.data.familyId == resource.data.familyId) &&
+        ('userId' in resource.data && 'userId' in request.resource.data && request.resource.data.userId == resource.data.userId)
       );
 
       allow delete: if isAuthenticated() && (
-        isAdminOfFamily(resource.data.familyId) ||
-        resource.data.userId == request.auth.uid
+        ('familyId' in resource.data && isAdminOfFamily(resource.data.familyId)) ||
+        ('userId' in resource.data && resource.data.userId == request.auth.uid)
       );
     }
   }

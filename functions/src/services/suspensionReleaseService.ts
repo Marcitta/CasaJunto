@@ -61,7 +61,8 @@ export interface ServerSuspensionReleaseParams {
   familyId: string;
   callerUid: string;
   expectedConsistencyVersion?: number;
-  expectedAuditStateHash?: string;
+  /** AUD-HF2.1-02: Digest SHA-256 obrigatório do estado pré-auditado (64 chars hex minúsculos). */
+  expectedAuditStateHash: string;
   /** Hook determinístico exclusivo para testes de concorrência dentro da transação */
   onAfterReadsHook?: () => Promise<void>;
 }
@@ -232,6 +233,18 @@ export class SuspensionReleaseService {
   }
 
   /**
+   * AUD-HF2.1-02: Exige expectedAuditStateHash presente, não-vazio e em formato SHA-256 hex (64 caracteres).
+   */
+  private static assertValidExpectedAuditStateHash(hash: unknown): asserts hash is string {
+    if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) {
+      throw new SuspensionReleaseError(
+        'INVALID_ARGUMENT',
+        'expectedAuditStateHash obrigatório e deve ser um digest SHA-256 hexadecimal válido de 64 caracteres.'
+      );
+    }
+  }
+
+  /**
    * Executa auditoria estrutural completa no servidor sobre FamilyTasks, routineIndex e routineIndexConflicts.
    */
   public static auditConsistency(
@@ -384,7 +397,7 @@ export class SuspensionReleaseService {
     idToken: string;
     familyId: string;
     expectedConsistencyVersion?: number;
-    expectedAuditStateHash?: string;
+    expectedAuditStateHash: string;
     onAfterReadsHook?: () => Promise<void>;
   }): Promise<ServerSuspensionReleaseResult> {
     const {
@@ -398,6 +411,7 @@ export class SuspensionReleaseService {
     } = params;
 
     const callerUid = await this.verifyCallerUidFromToken(auth, idToken);
+    this.assertValidExpectedAuditStateHash(expectedAuditStateHash);
 
     return await this.executeServerSuspensionRelease({
       firestoreDb,
@@ -658,6 +672,7 @@ export class SuspensionReleaseService {
     if (!callerUid || typeof callerUid !== 'string' || callerUid.trim() === '') {
       throw new SuspensionReleaseError('UNAUTHENTICATED', 'callerUid autenticado é obrigatório.');
     }
+    this.assertValidExpectedAuditStateHash(expectedAuditStateHash);
 
     const familyRef = firestoreDb.collection('families').doc(familyId);
     const membershipRef = firestoreDb.collection('familyMemberships').doc(`${familyId}_${callerUid}`);
@@ -710,12 +725,9 @@ export class SuspensionReleaseService {
       const indexes = idxSnap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, any>) }));
       const conflicts = confSnap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, any>) }));
 
-      // 5. AUD-HF3-HF2-02 (Req B.5): Verificar digest determinístico das subcoleções auditadas
+      // 5. AUD-HF3-HF2-02 / AUD-HF2.1-02: Verificar digest determinístico obrigatório das subcoleções auditadas
       const serverAuditStateHash = this.computeAuditStateHash(tasks, indexes, conflicts);
-      if (
-        expectedAuditStateHash !== undefined &&
-        serverAuditStateHash !== expectedAuditStateHash
-      ) {
+      if (serverAuditStateHash !== expectedAuditStateHash) {
         throw new SuspensionReleaseError(
           'CONCURRENCY_CONFLICT',
           'Conflito de concorrência: o estado de familyTasks/routineIndex/routineIndexConflicts foi alterado entre a pré-auditoria e a liberação.'

@@ -410,6 +410,12 @@ export class RoutineConsistencyChecker {
       );
     }
 
+    if (!serverState.auditStateHash || !/^[a-f0-9]{64}$/.test(serverState.auditStateHash)) {
+      throw new Error(
+        '[RoutineConsistencyChecker] AUD-HF2.1-02: auditStateHash inválido ou ausente ao preparar liberação.'
+      );
+    }
+
     const serverRes = await executor({
       familyId,
       performedByUid,
