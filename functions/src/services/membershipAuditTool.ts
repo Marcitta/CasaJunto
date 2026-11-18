@@ -1,13 +1,18 @@
 /**
- * CASA JUNTO — B.5.5-PRE-PILOT-G1 (BLOCO C)
+ * CASA JUNTO — B.5.5-PRE-PILOT-G1 / G1-HF1 (BLOCO B)
  * Ferramenta Estritamente Read-Only de Auditoria Diagnóstica de familyMemberships.
  *
- * GARANTIAS DE SEGURANÇA:
+ * GARANTIAS DE SEGURANÇA (FAIL-CLOSED):
  * 1. ZERO mutações: não executa set, update, delete, create, batch ou transaction.
- * 2. FAIL-CLOSED no banco: exige projectId e databaseId explícitos, rejeitando terminantemente "(default)".
- * 3. Proteção contra acesso remoto acidental: fora do Emulator, bloqueia execução a menos que
- *    allowRemoteReadOnly === true e authorizedReadOnlyTicket seja explicitamente informado.
- * 4. Zero exposição de PII/tokens/credenciais no relatório ou logs (apenas hashes curtos SHA-256).
+ * 2. FAIL-CLOSED no banco: exige projectId e databaseId explícitos (e expectedProjectId/expectedDatabaseId
+ *    quando informados), rejeitando terminantemente "(default)" / "default" ou divergências.
+ * 3. Acesso remoto 100% DESABILITADO neste gate:
+ *    - Somente modos 'synthetic' (em memória, zero cliente/rede) e 'emulator' (local validado) executam.
+ *    - Rejeita allowRemoteReadOnly e authorizedReadOnlyTicket arbitrários mesmo se fornecidos.
+ *    - Valida host local + porta (127.0.0.1, localhost, [::1]) de FIRESTORE_EMULATOR_HOST.
+ *    - Valida metadados internos (_settings/_databaseId) da instância Firestore antes de qualquer leitura.
+ * 4. Adaptador remoto futuro definido apenas como contrato não-executável neste gate.
+ * 5. Zero exposição de PII/tokens/credenciais em logs, erros ou relatórios (apenas hashes curtos SHA-256).
  */
 
 import { createHash } from 'node:crypto';
@@ -40,6 +45,9 @@ export const ALL_MEMBERSHIP_ANOMALY_CATEGORIES: readonly MembershipAnomalyCatego
 
 export const CANONICAL_DATABASE_ID = 'ai-studio-casajunto-a7d5bf10-b348-4406-bdbf-36200cb3f48c';
 const KNOWN_VALID_STATUSES = new Set(['ACTIVE', 'PENDING', 'INVITED', 'REVOKED', 'REMOVED']);
+const ALLOWED_LOCAL_EMULATOR_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
+export type AuditExecutionMode = 'synthetic' | 'emulator';
 
 export interface SyntheticMembershipRecord {
   docId: string;
@@ -63,9 +71,35 @@ export interface SyntheticAuditDataset {
 export interface AuditTargetConfig {
   projectId: string;
   databaseId: string;
-  /** Em produção/remoto exige autorização explícita; em emulador/sintético é dispensado. */
-  allowRemoteReadOnly?: boolean;
-  authorizedReadOnlyTicket?: string;
+  /** Quando informados, exigem correspondência exata com projectId/databaseId declarados e com a instância. */
+  expectedProjectId?: string;
+  expectedDatabaseId?: string;
+  /**
+   * Campos legados estritamente desabilitados neste gate.
+   * Qualquer tentativa de envio (inclusive via `as any`) dispara erro fail-closed antes de ler o banco.
+   */
+  allowRemoteReadOnly?: never;
+  authorizedReadOnlyTicket?: never;
+}
+
+/**
+ * Contrato explícito NÃO-EXECUTÁVEL reservado para um gate futuro com prova verificável em backend.
+ */
+export interface RemoteReadOnlyAuthorizationProof {
+  readonly ticketId: string;
+  readonly signedByBackendUid: string;
+  readonly targetProjectId: string;
+  readonly targetDatabaseId: string;
+  readonly expiresAt: string;
+  readonly signature: string;
+}
+
+export interface FutureRemoteMembershipAuditAdapter {
+  readonly gateStatus: 'DISABLED_IN_CURRENT_GATE';
+  executeAuthorizedRemoteAudit(params: {
+    target: AuditTargetConfig;
+    proof: RemoteReadOnlyAuthorizationProof;
+  }): Promise<never>;
 }
 
 export interface AnonymizedMembershipFinding {
@@ -79,7 +113,7 @@ export interface AnonymizedMembershipFinding {
 
 export interface MembershipAuditReport {
   generatedAt: string;
-  mode: 'synthetic' | 'emulator' | 'authorized-readonly';
+  mode: AuditExecutionMode;
   projectId: string;
   databaseId: string;
   readOnlyVerified: true;
@@ -94,21 +128,33 @@ export interface MembershipAuditReport {
   findings: AnonymizedMembershipFinding[];
 }
 
-export class MembershipAuditError extends Error {
-  public readonly code:
-    | 'INVALID_TARGET_CONFIG'
-    | 'DEFAULT_DATABASE_FORBIDDEN'
-    | 'REMOTE_READ_NOT_AUTHORIZED';
+export type MembershipAuditErrorCode =
+  | 'INVALID_TARGET_CONFIG'
+  | 'DEFAULT_DATABASE_FORBIDDEN'
+  | 'INVALID_EMULATOR_HOST'
+  | 'TARGET_MISMATCH'
+  | 'REMOTE_ACCESS_DISABLED_IN_GATE'
+  | 'INSTANCE_NOT_VERIFIED_AS_LOCAL_EMULATOR';
 
-  constructor(
-    code: 'INVALID_TARGET_CONFIG' | 'DEFAULT_DATABASE_FORBIDDEN' | 'REMOTE_READ_NOT_AUTHORIZED',
-    message: string
-  ) {
+export class MembershipAuditError extends Error {
+  public readonly code: MembershipAuditErrorCode;
+
+  constructor(code: MembershipAuditErrorCode, message: string) {
     super(message);
     this.name = 'MembershipAuditError';
     this.code = code;
   }
 }
+
+export const DisabledFutureRemoteAuditAdapter: FutureRemoteMembershipAuditAdapter = {
+  gateStatus: 'DISABLED_IN_CURRENT_GATE',
+  async executeAuthorizedRemoteAudit(): Promise<never> {
+    throw new MembershipAuditError(
+      'REMOTE_ACCESS_DISABLED_IN_GATE',
+      'Acesso remoto está estritamente desabilitado no gate B.5.5-PRE-PILOT-G1-HF1; nenhum adaptador remoto pode ser executado.'
+    );
+  }
+};
 
 function anonymizeId(rawId: string): string {
   return createHash('sha256').update(rawId).digest('hex').slice(0, 12);
@@ -116,6 +162,64 @@ function anonymizeId(rawId: string): string {
 
 function asNonEmptyString(val: unknown): string | null {
   return typeof val === 'string' && val.trim().length > 0 ? val.trim() : null;
+}
+
+function normalizeLoopbackHost(host: string): string {
+  const lower = host.trim().toLowerCase();
+  if (lower.startsWith('[') && lower.endsWith(']')) {
+    return lower.slice(1, -1);
+  }
+  return lower;
+}
+
+/**
+ * Analisa e valida rigorosamente FIRESTORE_EMULATOR_HOST para garantir que aponta EXCLUSIVAMENTE
+ * para host local (127.0.0.1, localhost ou [::1]) e porta TCP válida (1..65535).
+ */
+export function parseAndValidateLocalEmulatorHost(rawHost: string | undefined): {
+  host: string;
+  port: number;
+  normalized: string;
+} {
+  const trimmed = asNonEmptyString(rawHost);
+  if (!trimmed) {
+    throw new MembershipAuditError(
+      'INVALID_EMULATOR_HOST',
+      'FIRESTORE_EMULATOR_HOST ausente: execução contra Firestore requer emulador local explícito.'
+    );
+  }
+
+  // Rejeita esquemas HTTP/HTTPS, caminhos, query strings, espaços ou múltiplas entradas
+  if (/[/?#\s,@]/.test(trimmed)) {
+    throw new MembershipAuditError(
+      'INVALID_EMULATOR_HOST',
+      'FIRESTORE_EMULATOR_HOST malformado: utilize apenas "<host_local>:<porta>" sem protocolo ou caminho.'
+    );
+  }
+
+  const match = /^(127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})$/i.exec(trimmed);
+  if (!match) {
+    throw new MembershipAuditError(
+      'INVALID_EMULATOR_HOST',
+      'FIRESTORE_EMULATOR_HOST rejeitado: somente hosts locais (127.0.0.1, localhost, [::1]) com porta explícita são permitidos.'
+    );
+  }
+
+  const host = normalizeLoopbackHost(match[1]);
+  const port = Number.parseInt(match[2], 10);
+
+  if (!ALLOWED_LOCAL_EMULATOR_HOSTS.has(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new MembershipAuditError(
+      'INVALID_EMULATOR_HOST',
+      'Porta de FIRESTORE_EMULATOR_HOST inválida: informe uma porta inteira entre 1 e 65535.'
+    );
+  }
+
+  return {
+    host,
+    port,
+    normalized: `${match[1].toLowerCase()}:${port}`
+  };
 }
 
 /**
@@ -148,18 +252,33 @@ export function passesStrictMembershipRules(
 export function validateAuditTargetConfig(config: AuditTargetConfig): {
   projectId: string;
   databaseId: string;
+  expectedProjectId?: string;
+  expectedDatabaseId?: string;
 } {
+  const rawConfig = (config || {}) as unknown as Record<string, unknown>;
+
+  // Rejeição absoluta de flags/tickets remotos arbitrários neste gate (sem ecoar conteúdo sensível)
+  if (
+    ('allowRemoteReadOnly' in rawConfig && rawConfig.allowRemoteReadOnly !== undefined) ||
+    ('authorizedReadOnlyTicket' in rawConfig && rawConfig.authorizedReadOnlyTicket !== undefined)
+  ) {
+    throw new MembershipAuditError(
+      'REMOTE_ACCESS_DISABLED_IN_GATE',
+      'Acesso remoto (allowRemoteReadOnly / authorizedReadOnlyTicket) está desabilitado neste gate.'
+    );
+  }
+
   const projectId = asNonEmptyString(config?.projectId);
   const databaseId = asNonEmptyString(config?.databaseId);
 
-  if (!projectId) {
+  if (!projectId || /\s/.test(projectId)) {
     throw new MembershipAuditError(
       'INVALID_TARGET_CONFIG',
       'projectId explícito e não-vazio é obrigatório para a auditoria read-only.'
     );
   }
 
-  if (!databaseId) {
+  if (!databaseId || /\s/.test(databaseId)) {
     throw new MembershipAuditError(
       'INVALID_TARGET_CONFIG',
       'databaseId explícito e não-vazio é obrigatório para a auditoria read-only.'
@@ -174,7 +293,149 @@ export function validateAuditTargetConfig(config: AuditTargetConfig): {
     );
   }
 
-  return { projectId, databaseId };
+  let expectedProjectId: string | undefined;
+  if ('expectedProjectId' in rawConfig && rawConfig.expectedProjectId !== undefined) {
+    const expProj = asNonEmptyString(rawConfig.expectedProjectId);
+    if (!expProj) {
+      throw new MembershipAuditError(
+        'INVALID_TARGET_CONFIG',
+        'expectedProjectId, quando informado, deve ser uma string não-vazia.'
+      );
+    }
+    if (projectId !== expProj) {
+      throw new MembershipAuditError(
+        'TARGET_MISMATCH',
+        `Divergência de projectId: informado "${projectId}", esperado "${expProj}".`
+      );
+    }
+    expectedProjectId = expProj;
+  }
+
+  let expectedDatabaseId: string | undefined;
+  if ('expectedDatabaseId' in rawConfig && rawConfig.expectedDatabaseId !== undefined) {
+    const expDb = asNonEmptyString(rawConfig.expectedDatabaseId);
+    if (!expDb) {
+      throw new MembershipAuditError(
+        'INVALID_TARGET_CONFIG',
+        'expectedDatabaseId, quando informado, deve ser uma string não-vazia.'
+      );
+    }
+    if (expDb.toLowerCase() === '(default)' || expDb.toLowerCase() === 'default') {
+      throw new MembershipAuditError(
+        'DEFAULT_DATABASE_FORBIDDEN',
+        `Banco esperado "${expDb}" é proibido.`
+      );
+    }
+    if (databaseId !== expDb) {
+      throw new MembershipAuditError(
+        'TARGET_MISMATCH',
+        `Divergência de databaseId: informado "${databaseId}", esperado "${expDb}".`
+      );
+    }
+    expectedDatabaseId = expDb;
+  }
+
+  return { projectId, databaseId, expectedProjectId, expectedDatabaseId };
+}
+
+/**
+ * Inspeciona metadados internos da instância Firestore Admin SDK sem realizar I/O de rede,
+ * garantindo que aponta exatamente para o emulador local, projectId e databaseId validados.
+ */
+function verifyFirestoreInstanceTargetsLocalEmulator(params: {
+  firestoreDb: Firestore;
+  projectId: string;
+  databaseId: string;
+  emulatorHost: string;
+  emulatorPort: number;
+}): void {
+  const dbAny = params.firestoreDb as unknown as Record<string, unknown> | null;
+  if (!dbAny || typeof dbAny !== 'object' || typeof dbAny.collection !== 'function') {
+    throw new MembershipAuditError(
+      'INSTANCE_NOT_VERIFIED_AS_LOCAL_EMULATOR',
+      'Instância Firestore inválida ou ausente.'
+    );
+  }
+
+  const settings = (dbAny._settings ?? dbAny.settings) as Record<string, unknown> | undefined;
+  if (!settings || typeof settings !== 'object') {
+    throw new MembershipAuditError(
+      'INSTANCE_NOT_VERIFIED_AS_LOCAL_EMULATOR',
+      'Não foi possível verificar as configurações de destino da instância Firestore (fail-closed).'
+    );
+  }
+
+  if (settings.ssl === true) {
+    throw new MembershipAuditError(
+      'REMOTE_ACCESS_DISABLED_IN_GATE',
+      'Instância Firestore configurada com SSL remoto é proibida neste gate.'
+    );
+  }
+
+  const instanceProjectId = asNonEmptyString(settings.projectId) ?? asNonEmptyString(dbAny._projectId);
+  if (!instanceProjectId) {
+    throw new MembershipAuditError(
+      'INSTANCE_NOT_VERIFIED_AS_LOCAL_EMULATOR',
+      'projectId da instância Firestore não identificável (fail-closed).'
+    );
+  }
+  if (instanceProjectId !== params.projectId) {
+    throw new MembershipAuditError(
+      'TARGET_MISMATCH',
+      `projectId da instância Firestore ("${instanceProjectId}") diverge do target ("${params.projectId}").`
+    );
+  }
+
+  const instanceDatabaseId = asNonEmptyString(settings.databaseId) ?? asNonEmptyString(dbAny._databaseId);
+  if (!instanceDatabaseId) {
+    throw new MembershipAuditError(
+      'INSTANCE_NOT_VERIFIED_AS_LOCAL_EMULATOR',
+      'databaseId da instância Firestore não identificável (fail-closed).'
+    );
+  }
+  if (instanceDatabaseId.toLowerCase() === '(default)' || instanceDatabaseId.toLowerCase() === 'default') {
+    throw new MembershipAuditError(
+      'DEFAULT_DATABASE_FORBIDDEN',
+      'Instância Firestore apontando para "(default)" é terminantemente proibida.'
+    );
+  }
+  if (instanceDatabaseId !== params.databaseId) {
+    throw new MembershipAuditError(
+      'TARGET_MISMATCH',
+      `databaseId da instância Firestore ("${instanceDatabaseId}") diverge do target ("${params.databaseId}").`
+    );
+  }
+
+  const rawInstanceHost = asNonEmptyString(settings.servicePath) ?? asNonEmptyString(settings.host);
+  const rawInstancePort = typeof settings.port === 'number'
+    ? settings.port
+    : typeof settings.port === 'string'
+      ? Number.parseInt(settings.port, 10)
+      : Number.NaN;
+
+  // Se o Admin SDK foi inicializado antes de FIRESTORE_EMULATOR_HOST existir, servicePath/port ficam ausentes
+  // e o SDK tentaria conectar em firestore.googleapis.com:443 — bloquear imediatamente!
+  if (!rawInstanceHost || !Number.isInteger(rawInstancePort)) {
+    throw new MembershipAuditError(
+      'REMOTE_ACCESS_DISABLED_IN_GATE',
+      'Instância Firestore sem endpoint local explícito de emulador (possível alvo remoto bloqueado).'
+    );
+  }
+
+  const normalizedInstanceHost = normalizeLoopbackHost(rawInstanceHost);
+  if (!ALLOWED_LOCAL_EMULATOR_HOSTS.has(normalizedInstanceHost)) {
+    throw new MembershipAuditError(
+      'REMOTE_ACCESS_DISABLED_IN_GATE',
+      'Endpoint da instância Firestore não é um host local de emulador.'
+    );
+  }
+
+  if (normalizedInstanceHost !== params.emulatorHost || rawInstancePort !== params.emulatorPort) {
+    throw new MembershipAuditError(
+      'TARGET_MISMATCH',
+      'Endpoint da instância Firestore diverge de FIRESTORE_EMULATOR_HOST validado.'
+    );
+  }
 }
 
 function createEmptyCategoryCounts(): Record<MembershipAnomalyCategory, number> {
@@ -194,13 +455,21 @@ function createEmptyCategoryCounts(): Record<MembershipAnomalyCategory, number> 
 
 export class MembershipAuditTool {
   /**
-   * Analisa um conjunto de dados em memória (sintético ou coletado em modo estritamente read-only).
+   * Analisa um conjunto de dados em memória (sintético ou já coletado no emulador local).
+   * No modo 'synthetic', nunca inicializa cliente Firestore nem realiza I/O de rede.
    */
   public static auditDataset(params: {
-    mode: 'synthetic' | 'emulator' | 'authorized-readonly';
+    mode: AuditExecutionMode;
     target: AuditTargetConfig;
     dataset: SyntheticAuditDataset;
   }): MembershipAuditReport {
+    if (params.mode !== 'synthetic' && params.mode !== 'emulator') {
+      throw new MembershipAuditError(
+        'REMOTE_ACCESS_DISABLED_IN_GATE',
+        `Modo "${String(params.mode)}" não permitido neste gate (apenas "synthetic" e "emulator").`
+      );
+    }
+
     const { projectId, databaseId } = validateAuditTargetConfig(params.target);
     const { memberships, families } = params.dataset;
 
@@ -277,7 +546,6 @@ export class MembershipAuditTool {
         const expectedDocId = `${effectiveFamilyId}_${effectiveUserId}`;
         if (rec.docId !== expectedDocId) {
           categories.add('INCOMPATIBLE_DOC_ID');
-          // Se o docId segue padrão prefixado com outro sufixo/prefixo, marca também divergência se campos baterem errado
           const splitIdx = rec.docId.indexOf('_');
           if (splitIdx > 0) {
             const docPrefixFam = rec.docId.slice(0, splitIdx);
@@ -362,7 +630,6 @@ export class MembershipAuditTool {
         blockedUnderStrictRulesCount++;
       }
 
-      // Avaliar se é um vínculo inativo canônico legítimo (REVOKED / REMOVED / PENDING / INVITED sem erro estrutural)
       const structuralCategories = Array.from(categories).filter(
         c => c !== 'MEMBER_REVOKED_OR_REMOVED' && c !== 'ADMIN_NON_ACTIVE_STATUS' && c !== 'EXPLICIT_ACTIVE_FALSE'
       );
@@ -374,8 +641,6 @@ export class MembershipAuditTool {
         KNOWN_VALID_STATUSES.has(status);
 
       if (isCleanInactiveState && !categories.has('ADMIN_NON_ACTIVE_STATUS') && !categories.has('EXPLICIT_ACTIVE_FALSE')) {
-        // Estado inativo canônico (ex: membro removido/revogado mantendo registro para histórico)
-        // Ainda contabilizamos nas métricas de categoria caso aplicável, mas distinguimos de corrupção estrutural
         canonicalInactiveValidCount++;
       }
 
@@ -402,8 +667,7 @@ export class MembershipAuditTool {
       }
     }
 
-    // 10b. FAMILY_MEMBERS_INCOMPATIBILITY reversa:
-    // Member ativo vinculado a userId em families/{familyId}/members sem familyMemberships/{familyId}_{userId} ativo canônico
+    // 10b. FAMILY_MEMBERS_INCOMPATIBILITY reversa
     for (const fam of families) {
       for (const mbr of fam.members || []) {
         const mData = mbr.data || {};
@@ -443,26 +707,38 @@ export class MembershipAuditTool {
   }
 
   /**
-   * Executa varredura estritamente READ-ONLY contra uma instância Firestore explícita (Emulator ou futuro ambiente autorizado).
-   * BLOQUEIA acesso remoto não autorizado por padrão (fail-closed).
+   * Executa varredura estritamente READ-ONLY exclusivamente contra um Firestore Emulator local validado.
+   * Acesso remoto é 100% DESABILITADO neste gate (fail-closed antes de qualquer leitura).
    */
   public static async auditFirestoreDatabase(params: {
     firestoreDb: Firestore;
     target: AuditTargetConfig;
   }): Promise<MembershipAuditReport> {
-    const { projectId, databaseId } = validateAuditTargetConfig(params.target);
-    const isEmulator = Boolean(process.env.FIRESTORE_EMULATOR_HOST?.trim());
+    // 1. Valida target e rejeita flags/tickets remotos antes de tudo
+    const { projectId, databaseId, expectedProjectId, expectedDatabaseId } = validateAuditTargetConfig(params.target);
 
-    if (!isEmulator) {
-      const hasTicket = Boolean(params.target.authorizedReadOnlyTicket?.trim());
-      if (params.target.allowRemoteReadOnly !== true || !hasTicket) {
-        throw new MembershipAuditError(
-          'REMOTE_READ_NOT_AUTHORIZED',
-          'Acesso remoto bloqueado por segurança (fail-closed): FIRESTORE_EMULATOR_HOST ausente e autorização explícita de auditoria read-only não fornecida.'
-        );
-      }
+    // 2. Exige banco nomeado esperado explícito ou canônico
+    const requiredDatabaseId = expectedDatabaseId ?? CANONICAL_DATABASE_ID;
+    if (databaseId !== requiredDatabaseId) {
+      throw new MembershipAuditError(
+        'TARGET_MISMATCH',
+        `databaseId "${databaseId}" não autorizado neste gate (esperado: "${requiredDatabaseId}").`
+      );
     }
 
+    // 3. Valida estritamente FIRESTORE_EMULATOR_HOST (host local + porta válida)
+    const emulatorEndpoint = parseAndValidateLocalEmulatorHost(process.env.FIRESTORE_EMULATOR_HOST);
+
+    // 4. Verifica metadados da instância Firestore sem I/O de rede
+    verifyFirestoreInstanceTargetsLocalEmulator({
+      firestoreDb: params.firestoreDb,
+      projectId,
+      databaseId,
+      emulatorHost: emulatorEndpoint.host,
+      emulatorPort: emulatorEndpoint.port
+    });
+
+    // 5. Leituras estritamente read-only no emulador local validado
     const db = params.firestoreDb;
     const [membershipsSnap, familiesSnap] = await Promise.all([
       db.collection('familyMemberships').get(),
@@ -488,8 +764,13 @@ export class MembershipAuditTool {
     }
 
     return this.auditDataset({
-      mode: isEmulator ? 'emulator' : 'authorized-readonly',
-      target: { ...params.target, projectId, databaseId },
+      mode: 'emulator',
+      target: {
+        projectId,
+        databaseId,
+        expectedProjectId: expectedProjectId ?? projectId,
+        expectedDatabaseId: requiredDatabaseId
+      },
       dataset: { memberships, families }
     });
   }

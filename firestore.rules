@@ -258,9 +258,9 @@ service cloud.firestore {
         (!('lastReconciliationAt' in request.resource.data) ? !('lastReconciliationAt' in resource.data) : ('lastReconciliationAt' in resource.data && request.resource.data.lastReconciliationAt == resource.data.lastReconciliationAt)) &&
         (!('consistencyVersion' in request.resource.data) ? !('consistencyVersion' in resource.data) : ('consistencyVersion' in resource.data && request.resource.data.consistencyVersion == resource.data.consistencyVersion));
 
-      allow delete: if isAuthenticated() &&
-        ('ownerUserId' in resource.data) &&
-        resource.data.ownerUserId == request.auth.uid;
+      // G1-HF1 (BLOCO A): Exclusão física client-side da família estritamente proibida no MVP
+      // Impede remoção por owner sem vínculo ativo/ADMIN, evita subcoleções órfãs e preserva trilha de auditoria.
+      allow delete: if false;
 
       // Invites subcollection under Family
       match /invites/{memberId} {

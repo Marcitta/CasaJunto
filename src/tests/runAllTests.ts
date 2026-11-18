@@ -1310,14 +1310,14 @@ for (const s of b2cSuite.scenarios) {
   }
 }
 
-// 89. CASA JUNTO — B.5.5-PRE-PILOT-G1: PARIDADE DE SECURITY RULES DE PRODUÇÃO & AUDITORIA READ-ONLY (16 CENÁRIOS: G1-01 - G1-16)
-console.log('\n--- GRUPO 89: PRE-PILOT-G1 — PARIDADE FIRESTORE.RULES & AUDITORIA READ-ONLY (G1-01 - G1-16) ---');
+// 89. CASA JUNTO — B.5.5-PRE-PILOT-G1 + G1-HF1: PARIDADE DE SECURITY RULES DE PRODUÇÃO & HARDENING (24 CENÁRIOS: G1-01..G1-16 + G1-HF1-01..G1-HF1-08)
+console.log('\n--- GRUPO 89: PRE-PILOT-G1 + G1-HF1 — PARIDADE FIRESTORE.RULES & HARDENING (24 CENÁRIOS) ---');
 const g1Suite = await runPrePilotProductionRulesParityG1Tests({ rulesProfile: 'production' });
 console.log(`PRE-PILOT G1 STATUS: ${g1Suite.status}`);
 console.log(`PRE-PILOT G1 DIAGNOSTIC: ${g1Suite.summary}`);
 if (g1Suite.status === 'BLOCKED') {
-  totalBlocked += 16;
-  console.log('[⚠ BLOCKED] 16 cenários Pre-Pilot G1 bloqueados por indisponibilidade do Firebase Emulator.');
+  totalBlocked += 24;
+  console.log('[⚠ BLOCKED] 24 cenários Pre-Pilot G1 + G1-HF1 bloqueados por indisponibilidade do Firebase Emulator.');
 }
 for (const s of g1Suite.scenarios) {
   if (s.status === 'PASS') {

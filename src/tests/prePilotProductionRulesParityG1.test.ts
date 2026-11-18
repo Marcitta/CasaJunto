@@ -35,7 +35,7 @@ import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { REQUIRED_NAMED_DATABASE_ID } from '../infrastructure/firebase/FirestoreTransactionalAdapter';
 import { SuspensionReleaseService } from '../../functions/src/services/suspensionReleaseService';
-import { MembershipAuditTool } from '../../functions/src/services/membershipAuditTool';
+import { MembershipAuditError, MembershipAuditTool } from '../../functions/src/services/membershipAuditTool';
 
 export interface PrePilotG1ScenarioResult {
   id: string;
@@ -1015,6 +1015,25 @@ export async function runPrePilotProductionRulesParityG1Tests(options?: {
           }
         }
 
+        // G1-HF1 (BLOCO A): Verifica que match /families/{familyId} proíbe delete em AMBOS arquivos
+        const extractFamiliesBlock = (rulesSrc: string) => {
+          const start = rulesSrc.indexOf('match /families/{familyId}');
+          if (start < 0) return '';
+          const invIdx = rulesSrc.indexOf('match /invites/{memberId}', start);
+          const mbrIdx = rulesSrc.indexOf('match /members/{memberId}', start);
+          const candidates = [invIdx, mbrIdx].filter(i => i > start);
+          if (candidates.length === 0) return '';
+          return rulesSrc.slice(start, Math.min(...candidates));
+        };
+        const prodFamHeader = extractFamiliesBlock(prodRules);
+        const emuFamHeader = extractFamiliesBlock(emuRules);
+        if (!prodFamHeader.includes('allow delete: if false;')) {
+          throw new Error('firestore.rules deve conter "allow delete: if false;" em match /families/{familyId}');
+        }
+        if (!emuFamHeader.includes('allow delete: if false;')) {
+          throw new Error('firestore.emulator.rules deve conter "allow delete: if false;" em match /families/{familyId}');
+        }
+
         // Verifica que todas as coleções originais de produção permanecem presentes em firestore.rules
         const requiredProdCollections = [
           'match /users/{userId}',
@@ -1072,7 +1091,9 @@ export async function runPrePilotProductionRulesParityG1Tests(options?: {
           firestoreDb: adminDb as any,
           target: {
             projectId: PROJECT_ID,
-            databaseId: REQUIRED_NAMED_DATABASE_ID
+            databaseId: REQUIRED_NAMED_DATABASE_ID,
+            expectedProjectId: PROJECT_ID,
+            expectedDatabaseId: REQUIRED_NAMED_DATABASE_ID
           }
         });
 
@@ -1090,6 +1111,360 @@ export async function runPrePilotProductionRulesParityG1Tests(options?: {
         }
 
         return `Auditoria read-only executada no Emulator (${report.totalMembershipsScanned} memberships lidas, zero escritas).`;
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-01: Owner ADMIN ACTIVE não pode excluir fisicamente /families/{id}
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-01',
+      'Owner com membership ADMIN ACTIVE bloqueado ao tentar deleteDoc em /families/{id}',
+      'INTEGRITY',
+      async () => {
+        const owner = await spawnClient('g1hf1-01-owner');
+        const famId = `fam_g1hf1_01_${Date.now()}`;
+        await adminDb.collection('families').doc(famId).set({
+          id: famId,
+          name: 'Casa Protegida 01',
+          ownerUserId: owner.uid,
+          routineSuspended: false,
+          consistencyVersion: 1
+        });
+        await adminDb.collection('familyMemberships').doc(`${famId}_${owner.uid}`).set({
+          familyId: famId,
+          userId: owner.uid,
+          memberId: 'mbr_owner_01',
+          role: 'ADMIN',
+          status: 'ACTIVE',
+          active: true
+        });
+
+        await expectDenied(
+          () => deleteDoc(doc(owner.db, 'families', famId)),
+          'Owner ADMIN ACTIVE tentar excluir família'
+        );
+
+        const persisted = await adminDb.collection('families').doc(famId).get();
+        if (!persisted.exists) throw new Error('Documento da família desapareceu após tentativa bloqueada!');
+        return 'Exclusão por owner ADMIN ACTIVE bloqueada (403); família preservada.';
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-02: Owner com vínculo REMOVED ou REVOKED bloqueado ao excluir família
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-02',
+      'Owner com membership REMOVED ou REVOKED bloqueado ao tentar deleteDoc em /families/{id}',
+      'RBAC',
+      async () => {
+        for (const badStatus of ['REMOVED', 'REVOKED'] as const) {
+          const owner = await spawnClient(`g1hf1-02-${badStatus.toLowerCase()}`);
+          const famId = `fam_g1hf1_02_${badStatus.toLowerCase()}_${Date.now()}`;
+          await adminDb.collection('families').doc(famId).set({
+            id: famId,
+            ownerUserId: owner.uid,
+            routineSuspended: false
+          });
+          await adminDb.collection('familyMemberships').doc(`${famId}_${owner.uid}`).set({
+            familyId: famId,
+            userId: owner.uid,
+            memberId: 'mbr_ex_owner',
+            role: 'ADMIN',
+            status: badStatus
+          });
+
+          await expectDenied(
+            () => deleteDoc(doc(owner.db, 'families', famId)),
+            `Owner ${badStatus} tentar excluir família`
+          );
+          const snap = await adminDb.collection('families').doc(famId).get();
+          if (!snap.exists) throw new Error(`Família removida indevidamente por owner ${badStatus}`);
+        }
+        return 'Owners com vínculo REMOVED ou REVOKED bloqueados (403).';
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-03: Owner sem vínculo ou apenas com vínculo em outra família bloqueado
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-03',
+      'Owner sem vínculo na família ou apenas em outra família bloqueado ao excluir /families/{id}',
+      'ISOLATION',
+      async () => {
+        const ownerNoMem = await spawnClient('g1hf1-03-nomem');
+        const ownerOtherFam = await spawnClient('g1hf1-03-otherfam');
+        const famNoMem = `fam_g1hf1_03a_${Date.now()}`;
+        const famTarget = `fam_g1hf1_03b_${Date.now()}`;
+        const famOther = `fam_g1hf1_03c_${Date.now()}`;
+
+        await adminDb.collection('families').doc(famNoMem).set({ id: famNoMem, ownerUserId: ownerNoMem.uid });
+        await adminDb.collection('families').doc(famTarget).set({ id: famTarget, ownerUserId: ownerOtherFam.uid });
+        await adminDb.collection('families').doc(famOther).set({ id: famOther, ownerUserId: ownerOtherFam.uid });
+        await adminDb.collection('familyMemberships').doc(`${famOther}_${ownerOtherFam.uid}`).set({
+          familyId: famOther,
+          userId: ownerOtherFam.uid,
+          memberId: 'mbr_other',
+          role: 'ADMIN',
+          status: 'ACTIVE'
+        });
+
+        await expectDenied(
+          () => deleteDoc(doc(ownerNoMem.db, 'families', famNoMem)),
+          'Owner sem vínculo excluir família'
+        );
+        await expectDenied(
+          () => deleteDoc(doc(ownerOtherFam.db, 'families', famTarget)),
+          'Owner com vínculo em outra família excluir família alvo'
+        );
+
+        const s1 = await adminDb.collection('families').doc(famNoMem).get();
+        const s2 = await adminDb.collection('families').doc(famTarget).get();
+        if (!s1.exists || !s2.exists) throw new Error('Família não deveria ter sido excluída');
+
+        return 'Owner sem membership e owner cross-tenant bloqueados (403).';
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-04: Usuário MEMBER comum bloqueado ao tentar excluir família
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-04',
+      'Usuário MEMBER ativo bloqueado ao tentar deleteDoc em /families/{id}',
+      'RBAC',
+      async () => {
+        const mem = await spawnClient('g1hf1-04-mem');
+        const famId = `fam_g1hf1_04_${Date.now()}`;
+        await adminDb.collection('families').doc(famId).set({
+          id: famId,
+          ownerUserId: 'another_owner_uid',
+          routineSuspended: false
+        });
+        await adminDb.collection('familyMemberships').doc(`${famId}_${mem.uid}`).set({
+          familyId: famId,
+          userId: mem.uid,
+          memberId: 'mbr_common',
+          role: 'MEMBER',
+          status: 'ACTIVE'
+        });
+
+        await expectDenied(
+          () => deleteDoc(doc(mem.db, 'families', famId)),
+          'MEMBER tentar excluir família'
+        );
+        const snap = await adminDb.collection('families').doc(famId).get();
+        if (!snap.exists) throw new Error('Família foi excluída por MEMBER');
+
+        return 'MEMBER comum bloqueado ao tentar excluir família (403).';
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-05: Família com routineSuspended: true protegida contra exclusão
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-05',
+      'Família com routineSuspended=true protegida contra exclusão até por owner ADMIN',
+      'INTEGRITY',
+      async () => {
+        const owner = await spawnClient('g1hf1-05-owner');
+        const famId = `fam_g1hf1_05_${Date.now()}`;
+        await adminDb.collection('families').doc(famId).set({
+          id: famId,
+          ownerUserId: owner.uid,
+          routineSuspended: true,
+          consistencyVersion: 3
+        });
+        await adminDb.collection('familyMemberships').doc(`${famId}_${owner.uid}`).set({
+          familyId: famId,
+          userId: owner.uid,
+          memberId: 'mbr_susp_adm',
+          role: 'ADMIN',
+          status: 'ACTIVE'
+        });
+
+        await expectDenied(
+          () => deleteDoc(doc(owner.db, 'families', famId)),
+          'Owner ADMIN excluir família sob routineSuspended=true'
+        );
+        const snap = await adminDb.collection('families').doc(famId).get();
+        if (!snap.exists || snap.data()?.routineSuspended !== true) {
+          throw new Error('Família suspensa foi alterada/excluída');
+        }
+        return 'Família sob routineSuspended=true protegida contra exclusão (403).';
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-06: Preservação integral de família, subcoleções e histórico após tentativa negada
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-06',
+      'Preservação completa de subcoleções (members, familyTasks, assignments COMPLETED/DONE, audits) após delete negado',
+      'INTEGRITY',
+      async () => {
+        const owner = await spawnClient('g1hf1-06-owner');
+        const famId = `fam_g1hf1_06_${Date.now()}`;
+        await adminDb.collection('families').doc(famId).set({ id: famId, ownerUserId: owner.uid });
+        await adminDb.collection('familyMemberships').doc(`${famId}_${owner.uid}`).set({
+          familyId: famId, userId: owner.uid, memberId: 'mbr_06', role: 'ADMIN', status: 'ACTIVE'
+        });
+        await adminDb.collection('families').doc(famId).collection('members').doc('mbr_06').set({
+          id: 'mbr_06', userId: owner.uid, role: 'ADMIN', active: true
+        });
+        await adminDb.collection('families').doc(famId).collection('familyTasks').doc('ft_06').set({
+          id: 'ft_06', familyId: famId, taskMasterId: 'tm_06', roomId: 'cozinha', active: true
+        });
+        await adminDb.collection('families').doc(famId).collection('assignments').doc('asg_done_06').set({
+          id: 'asg_done_06', familyId: famId, memberId: 'mbr_06', status: 'COMPLETED', completedAt: '2026-11-18T10:00:00Z'
+        });
+        await adminDb.collection('families').doc(famId).collection('routineReleaseAudits').doc('aud_06').set({
+          auditId: 'aud_06', familyId: famId, status: 'AUDIT_PASSED'
+        });
+
+        await expectDenied(
+          () => deleteDoc(doc(owner.db, 'families', famId)),
+          'Delete na família com histórico'
+        );
+
+        const [famSnap, memSnap, ftSnap, asgSnap, audSnap] = await Promise.all([
+          adminDb.collection('families').doc(famId).get(),
+          adminDb.collection('families').doc(famId).collection('members').doc('mbr_06').get(),
+          adminDb.collection('families').doc(famId).collection('familyTasks').doc('ft_06').get(),
+          adminDb.collection('families').doc(famId).collection('assignments').doc('asg_done_06').get(),
+          adminDb.collection('families').doc(famId).collection('routineReleaseAudits').doc('aud_06').get()
+        ]);
+        if (!famSnap.exists || !memSnap.exists || !ftSnap.exists || !asgSnap.exists || !audSnap.exists) {
+          throw new Error('Dados ou histórico da família perdidos após tentativa negada de exclusão');
+        }
+        return 'Família, membros, rotinas, assignments COMPLETED e auditorias 100% preservados.';
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-07: Bloqueio fail-closed da MembershipAuditTool contra acesso remoto, bypass ou target divergente no Emulator
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-07',
+      'MembershipAuditTool bloqueia allowRemoteReadOnly/ticket, host remoto, (default) e divergência antes de ler',
+      'AUDIT_TOOL',
+      async () => {
+        const prevHost = process.env.FIRESTORE_EMULATOR_HOST;
+        const appDefault = initializeAdminApp({ projectId: PROJECT_ID }, `g1hf1-def-${Date.now()}`);
+        const dbDefault = getAdminFirestore(appDefault);
+        try {
+          // 1. Rejeita allowRemoteReadOnly + ticket arbitrário mesmo com emulador ativo
+          let blockedBypass = false;
+          try {
+            await MembershipAuditTool.auditFirestoreDatabase({
+              firestoreDb: adminDb as any,
+              target: {
+                projectId: PROJECT_ID,
+                databaseId: REQUIRED_NAMED_DATABASE_ID,
+                allowRemoteReadOnly: true,
+                authorizedReadOnlyTicket: 'FORGED-TICKET-123'
+              } as any
+            });
+          } catch (err: any) {
+            blockedBypass = err instanceof MembershipAuditError && err.code === 'REMOTE_ACCESS_DISABLED_IN_GATE';
+          }
+          if (!blockedBypass) throw new Error('Deveria rejeitar allowRemoteReadOnly/ticket no Emulator');
+
+          // 2. Rejeita instância apontando para banco (default)
+          let blockedDefault = false;
+          try {
+            await MembershipAuditTool.auditFirestoreDatabase({
+              firestoreDb: dbDefault as any,
+              target: {
+                projectId: PROJECT_ID,
+                databaseId: REQUIRED_NAMED_DATABASE_ID,
+                expectedProjectId: PROJECT_ID,
+                expectedDatabaseId: REQUIRED_NAMED_DATABASE_ID
+              }
+            });
+          } catch (err: any) {
+            blockedDefault = err instanceof MembershipAuditError && err.code === 'DEFAULT_DATABASE_FORBIDDEN';
+          }
+          if (!blockedDefault) throw new Error('Deveria rejeitar instância apontando para (default)');
+
+          // 3. Rejeita FIRESTORE_EMULATOR_HOST remoto sem ler nada
+          process.env.FIRESTORE_EMULATOR_HOST = 'firestore.googleapis.com:443';
+          let blockedRemoteHost = false;
+          try {
+            await MembershipAuditTool.auditFirestoreDatabase({
+              firestoreDb: adminDb as any,
+              target: { projectId: PROJECT_ID, databaseId: REQUIRED_NAMED_DATABASE_ID }
+            });
+          } catch (err: any) {
+            blockedRemoteHost = err instanceof MembershipAuditError && err.code === 'INVALID_EMULATOR_HOST';
+          }
+          if (!blockedRemoteHost) throw new Error('Deveria rejeitar FIRESTORE_EMULATOR_HOST remoto');
+
+          return 'Bypass remoto/ticket, instância (default) e host remoto bloqueados fail-closed sem I/O.';
+        } finally {
+          if (prevHost !== undefined) {
+            process.env.FIRESTORE_EMULATOR_HOST = prevHost;
+          } else {
+            process.env.FIRESTORE_EMULATOR_HOST = `${EMULATOR_HOST}:${FIRESTORE_PORT}`;
+          }
+          await deleteAdminApp(appDefault).catch(() => {});
+        }
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // G1-HF1-08: Regressão positiva da MembershipAuditTool com confirmação explícita de target e zero PII/escritas
+    // -------------------------------------------------------------------------
+    await runScenario(
+      'G1-HF1-08',
+      'MembershipAuditTool executa no Emulator com expectedProjectId/expectedDatabaseId válidos e zero vazamento de PII',
+      'AUDIT_TOOL',
+      async () => {
+        const famId = `fam_g1hf1_08_${Date.now()}`;
+        const uidPii = `uid_pii_g1hf1_${Date.now()}`;
+        await adminDb.collection('families').doc(famId).set({
+          id: famId,
+          name: 'Família Sigilosa G1HF1',
+          ownerUserId: uidPii
+        });
+        await adminDb.collection('families').doc(famId).collection('members').doc('mbr_sigiloso').set({
+          userId: uidPii,
+          name: 'Carlos Drummond',
+          email: 'carlos.sigiloso@example.com',
+          role: 'MEMBER',
+          active: true
+        });
+        await adminDb.collection('familyMemberships').doc(`${famId}_${uidPii}`).set({
+          familyId: famId,
+          userId: uidPii,
+          memberId: 'mbr_sigiloso',
+          role: 'MEMBER',
+          status: 'REMOVED'
+        });
+
+        const report = await MembershipAuditTool.auditFirestoreDatabase({
+          firestoreDb: adminDb as any,
+          target: {
+            projectId: PROJECT_ID,
+            databaseId: REQUIRED_NAMED_DATABASE_ID,
+            expectedProjectId: PROJECT_ID,
+            expectedDatabaseId: REQUIRED_NAMED_DATABASE_ID
+          }
+        });
+
+        if (report.mode !== 'emulator' || !report.readOnlyVerified) {
+          throw new Error('Modo/verificação readOnly inválido');
+        }
+        const serialized = JSON.stringify(report);
+        for (const pii of [famId, uidPii, 'Carlos Drummond', 'carlos.sigiloso@example.com', 'Família Sigilosa G1HF1']) {
+          if (serialized.includes(pii)) {
+            throw new Error(`Vazamento de PII/ID bruto no relatório do Emulator: ${pii}`);
+          }
+        }
+        return `Auditoria Emulator válida com expected target OK (${report.totalMembershipsScanned} docs, 0 PII, 0 escritas).`;
       }
     );
   } finally {

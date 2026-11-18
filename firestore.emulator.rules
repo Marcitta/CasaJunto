@@ -120,7 +120,8 @@ service cloud.firestore {
         (!('routineReleaseAuditAt' in request.resource.data) ? !('routineReleaseAuditAt' in resource.data) : ('routineReleaseAuditAt' in resource.data && request.resource.data.routineReleaseAuditAt == resource.data.routineReleaseAuditAt)) &&
         (!('lastReconciliationAt' in request.resource.data) ? !('lastReconciliationAt' in resource.data) : ('lastReconciliationAt' in resource.data && request.resource.data.lastReconciliationAt == resource.data.lastReconciliationAt)) &&
         (!('consistencyVersion' in request.resource.data) ? !('consistencyVersion' in resource.data) : ('consistencyVersion' in resource.data && request.resource.data.consistencyVersion == resource.data.consistencyVersion));
-      allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
+      // G1-HF1 (BLOCO A): Exclusão física client-side da família estritamente proibida no MVP (paridade com produção)
+      allow delete: if false;
 
       // 0. MEMBROS DA FAMÍLIA (members) — Alinhado ao bootstrap canônico e RBAC estrito
       match /members/{memberId} {
