@@ -7,9 +7,10 @@ import { runNotifications1b1Hf1Tests } from '../../../src/tests/notifications1b1
 import { runNotifications1b2Tests } from '../../../src/tests/notifications1b2.test';
 import { runNotifications1b2Hf1Tests } from '../../../src/tests/notifications1b2Hf1.test';
 import { runNotifications1cHf3Tests } from './notifications1cHf3.test';
+import { runMembershipAuditToolTests } from './membershipAuditTool.test';
 
 async function main() {
-  console.log('--- EXECUTANDO TESTES ISOLADOS DE CLOUD FUNCTIONS (1B.1, 1B.1-HF1, 1B.2, 1B.2-HF1, 1C-HF3) ---');
+  console.log('--- EXECUTANDO TESTES ISOLADOS DE CLOUD FUNCTIONS (1B.1, 1B.1-HF1, 1B.2, 1B.2-HF1, 1C-HF3, AUDIT-G1) ---');
   let failed = 0;
   let total = 0;
   let passed = 0;
@@ -19,7 +20,8 @@ async function main() {
     { name: '1B.1-HF1', fn: runNotifications1b1Hf1Tests },
     { name: '1B.2', fn: runNotifications1b2Tests },
     { name: '1B.2-HF1', fn: runNotifications1b2Hf1Tests },
-    { name: '1C-HF3', fn: runNotifications1cHf3Tests }
+    { name: '1C-HF3', fn: runNotifications1cHf3Tests },
+    { name: 'AUDIT-G1', fn: runMembershipAuditToolTests }
   ];
 
   for (const suite of suites) {

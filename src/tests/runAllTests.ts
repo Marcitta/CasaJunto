@@ -86,6 +86,7 @@ import { runTaskMultiRoomTransactionalBlocoDB1Tests } from './taskMultiRoomTrans
 import { runTaskMultiRoomEmulatorBlocoDB2Tests } from './taskMultiRoomEmulatorBlocoDB2.test';
 import { runTaskMultiRoomControlledIntegrationB2BTests } from './taskMultiRoomControlledIntegrationB2B.test';
 import { runTaskMultiRoomGateSecurityCoexistenceB2CTests } from './taskMultiRoomGateSecurityCoexistenceB2C.test';
+import { runPrePilotProductionRulesParityG1Tests } from './prePilotProductionRulesParityG1.test';
 
 console.log('================================================================');
 console.log('CASA JUNTO — SUÍTE INTEGRADA COMPLETA DE REGRESSÃO');
@@ -1295,6 +1296,30 @@ const b2cSuite = await runTaskMultiRoomGateSecurityCoexistenceB2CTests();
 console.log(`B2C GATE STATUS: ${b2cSuite.status}`);
 console.log(`B2C GATE DIAGNOSTIC: ${b2cSuite.summary}`);
 for (const s of b2cSuite.scenarios) {
+  if (s.status === 'PASS') {
+    totalTests++;
+    totalPassed++;
+    console.log(`[✓ PASS] ${s.id}: ${s.name}`);
+  } else if (s.status === 'BLOCKED') {
+    totalBlocked++;
+    console.log(`[⚠ BLOCKED] ${s.id}: ${s.name} - ${s.details || ''}`);
+  } else {
+    totalTests++;
+    totalFailed++;
+    console.log(`[✗ FAIL] ${s.id}: ${s.name} - ${s.details || ''}`);
+  }
+}
+
+// 89. CASA JUNTO — B.5.5-PRE-PILOT-G1: PARIDADE DE SECURITY RULES DE PRODUÇÃO & AUDITORIA READ-ONLY (16 CENÁRIOS: G1-01 - G1-16)
+console.log('\n--- GRUPO 89: PRE-PILOT-G1 — PARIDADE FIRESTORE.RULES & AUDITORIA READ-ONLY (G1-01 - G1-16) ---');
+const g1Suite = await runPrePilotProductionRulesParityG1Tests({ rulesProfile: 'production' });
+console.log(`PRE-PILOT G1 STATUS: ${g1Suite.status}`);
+console.log(`PRE-PILOT G1 DIAGNOSTIC: ${g1Suite.summary}`);
+if (g1Suite.status === 'BLOCKED') {
+  totalBlocked += 16;
+  console.log('[⚠ BLOCKED] 16 cenários Pre-Pilot G1 bloqueados por indisponibilidade do Firebase Emulator.');
+}
+for (const s of g1Suite.scenarios) {
   if (s.status === 'PASS') {
     totalTests++;
     totalPassed++;

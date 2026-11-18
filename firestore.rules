@@ -2,46 +2,103 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // =========================================================================
+    // Helpers canônicos de autenticação, vínculo ativo e proteção contra falhas
+    // (Alinhados com firestore.emulator.rules — HF3 / HF3-HF1 / HF3-HF2 / HF2.1)
+    // =========================================================================
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && request.auth.uid != null;
     }
 
     function isUser(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function membershipPath(familyId) {
+      return /databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid);
+    }
+
     function membershipDoc(familyId) {
       return get(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid));
     }
 
+    // AUD-HF2.1-01: Contrato canônico estrito de vínculo ativo (sem fallback permissivo para status ou identidade ausentes)
+    function hasValidActiveMembership(familyId) {
+      return isAuthenticated() &&
+        exists(membershipPath(familyId)) &&
+        ('familyId' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.familyId == familyId &&
+        ('userId' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.userId == request.auth.uid &&
+        ('status' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.status == 'ACTIVE' &&
+        (!('active' in membershipDoc(familyId).data) || membershipDoc(familyId).data.active == true) &&
+        ('role' in membershipDoc(familyId).data) &&
+        membershipDoc(familyId).data.role is string &&
+        membershipDoc(familyId).data.role.size() > 0;
+    }
+
     function isMemberOfFamily(familyId) {
-      return isAuthenticated() && exists(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid));
+      return hasValidActiveMembership(familyId);
     }
 
     function isAdminOfFamily(familyId) {
-      return isMemberOfFamily(familyId) && membershipDoc(familyId).data.role == 'ADMIN';
+      return hasValidActiveMembership(familyId) &&
+        membershipDoc(familyId).data.role == 'ADMIN';
     }
 
     function callerMemberId(familyId) {
-      return ('memberId' in membershipDoc(familyId).data) ? membershipDoc(familyId).data.memberId : membershipDoc(familyId).data.member_id;
+      return ('memberId' in membershipDoc(familyId).data)
+        ? membershipDoc(familyId).data.memberId
+        : (('member_id' in membershipDoc(familyId).data) ? membershipDoc(familyId).data.member_id : null);
+    }
+
+    function assignmentMemberId(data) {
+      return ('member_id' in data && data.member_id != null && data.member_id != '') ? data.member_id :
+             (('memberId' in data && data.memberId != null && data.memberId != '') ? data.memberId : null);
+    }
+
+    function isAssignmentUnassigned(data) {
+      return assignmentMemberId(data) == null ||
+             ('is_unassigned' in data && data.is_unassigned == true) ||
+             ('isUnassigned' in data && data.isUnassigned == true);
+    }
+
+    // Trava persistente de suspensão de rotinas validada no servidor
+    function isRoutinesSuspended(familyId) {
+      return exists(/databases/$(database)/documents/families/$(familyId)) ? (
+        ('routineSuspended' in get(/databases/$(database)/documents/families/$(familyId)).data &&
+         get(/databases/$(database)/documents/families/$(familyId)).data.routineSuspended == true) ||
+        ('routinesSuspended' in get(/databases/$(database)/documents/families/$(familyId)).data &&
+         get(/databases/$(database)/documents/families/$(familyId)).data.routinesSuspended == true)
+      ) : false;
     }
 
     function isBootstrapOwnerMember(familyId) {
       return isAuthenticated() &&
         (('user_id' in request.resource.data && request.resource.data.user_id == request.auth.uid) ||
          ('userId' in request.resource.data && request.resource.data.userId == request.auth.uid)) &&
+        ('role' in request.resource.data) &&
         request.resource.data.role == 'ADMIN' &&
         (('family_id' in request.resource.data && request.resource.data.family_id == familyId) ||
          ('familyId' in request.resource.data && request.resource.data.familyId == familyId)) &&
         existsAfter(/databases/$(database)/documents/families/$(familyId)) &&
+        ('ownerUserId' in getAfter(/databases/$(database)/documents/families/$(familyId)).data) &&
         getAfter(/databases/$(database)/documents/families/$(familyId)).data.ownerUserId == request.auth.uid &&
-        existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
-        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
-        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
+        existsAfter(membershipPath(familyId)) &&
+        ('familyId' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.familyId == familyId &&
+        ('userId' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.userId == request.auth.uid &&
+        ('role' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.role == 'ADMIN' &&
+        ('status' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.status == 'ACTIVE' &&
+        (!('active' in getAfter(membershipPath(familyId)).data) ||
+          getAfter(membershipPath(familyId)).data.active == true);
     }
 
-    // 1. Users collection: user can only read and write their own profile
+    // 1. Users collection: user can only read authenticated profiles and write their own profile
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create, update: if isUser(userId);
@@ -61,40 +118,69 @@ service cloud.firestore {
     // 2. Family Memberships: Top-level links between User and Family
     match /familyMemberships/{membershipId} {
       allow read: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid ||
-        resource.data.user_id == request.auth.uid ||
-        isMemberOfFamily(resource.data.familyId) ||
-        isMemberOfFamily(resource.data.family_id)
+        ('userId' in resource.data && resource.data.userId == request.auth.uid) ||
+        ('user_id' in resource.data && resource.data.user_id == request.auth.uid) ||
+        ('familyId' in resource.data && isMemberOfFamily(resource.data.familyId)) ||
+        ('family_id' in resource.data && isMemberOfFamily(resource.data.family_id))
       );
+
       // User can create their initial ADMIN membership when creating a family, or an ADMIN can invite, or via accepted invitation
       allow create: if isAuthenticated() && (
-        (request.resource.data.userId == request.auth.uid &&
-         request.resource.data.role == 'ADMIN' &&
-         request.resource.data.status == 'ACTIVE' &&
-         existsAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)) &&
-         getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.ownerUserId == request.auth.uid) ||
-        isAdminOfFamily(request.resource.data.familyId) ||
-        // Permitir criação via aceite transacional com convite (validação bidirecional atômica):
+        // Caso 1: Bootstrap legítimo do primeiro ADMIN (validação mútua atômica)
         (
+          ('familyId' in request.resource.data) &&
+          request.resource.data.familyId is string &&
+          request.resource.data.familyId.size() > 0 &&
           membershipId == request.resource.data.familyId + '_' + request.auth.uid &&
+          ('userId' in request.resource.data) &&
           request.resource.data.userId == request.auth.uid &&
+          ('role' in request.resource.data) &&
+          request.resource.data.role == 'ADMIN' &&
+          ('status' in request.resource.data) &&
           request.resource.data.status == 'ACTIVE' &&
+          (!('active' in request.resource.data) || request.resource.data.active == true) &&
+          existsAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)) &&
+          ('ownerUserId' in getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data) &&
+          getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.ownerUserId == request.auth.uid
+        ) ||
+        // Caso 2: ADMIN ativo existente adicionando novo membro
+        ('familyId' in request.resource.data && request.resource.data.familyId is string && isAdminOfFamily(request.resource.data.familyId)) ||
+        // Caso 3: Criação via aceite transacional com convite (validação bidirecional atômica preservada)
+        (
+          ('familyId' in request.resource.data) &&
+          request.resource.data.familyId is string &&
+          request.resource.data.familyId.size() > 0 &&
+          membershipId == request.resource.data.familyId + '_' + request.auth.uid &&
+          ('userId' in request.resource.data) &&
+          request.resource.data.userId == request.auth.uid &&
+          ('status' in request.resource.data) &&
+          request.resource.data.status == 'ACTIVE' &&
+          (!('active' in request.resource.data) || request.resource.data.active == true) &&
+          ('memberId' in request.resource.data) &&
+          request.resource.data.memberId is string &&
+          ('role' in request.resource.data) &&
           request.resource.data.role == getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/members/$(request.resource.data.memberId)).data.role &&
           getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/invites/$(request.resource.data.memberId)).data.status == 'ACCEPTED' &&
           getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/invites/$(request.resource.data.memberId)).data.acceptedByUid == request.auth.uid &&
           getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)/members/$(request.resource.data.memberId)).data.userId == request.auth.uid
         )
       );
-      // Update memberships: ADMIN or self via accepted invitation (without self-promoting or reactivating REMOVED)
+
+      // Update memberships: ADMIN or self via accepted invitation (without self-promoting, cross-tenant shift or reactivating REMOVED)
       allow update: if isAuthenticated() && (
-        (isAdminOfFamily(resource.data.familyId) && (
-          request.resource.data.familyId == resource.data.familyId &&
-          request.resource.data.userId == resource.data.userId
-        )) ||
         (
+          ('familyId' in resource.data) &&
+          isAdminOfFamily(resource.data.familyId) &&
+          ('familyId' in request.resource.data && request.resource.data.familyId == resource.data.familyId) &&
+          ('userId' in resource.data && 'userId' in request.resource.data && request.resource.data.userId == resource.data.userId)
+        ) ||
+        (
+          ('familyId' in resource.data) &&
           membershipId == resource.data.familyId + '_' + request.auth.uid &&
-          request.resource.data.userId == request.auth.uid &&
-          request.resource.data.status == 'ACTIVE' &&
+          ('familyId' in request.resource.data && request.resource.data.familyId == resource.data.familyId) &&
+          ('userId' in request.resource.data && request.resource.data.userId == request.auth.uid) &&
+          ('status' in request.resource.data && request.resource.data.status == 'ACTIVE') &&
+          (!('active' in request.resource.data) || request.resource.data.active == true) &&
           resource.data.status != 'REMOVED' &&
           (resource.data.memberId == request.resource.data.memberId || resource.data.memberId == null) &&
           request.resource.data.role == getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/members/$(request.resource.data.memberId)).data.role &&
@@ -103,17 +189,18 @@ service cloud.firestore {
           getAfter(/databases/$(database)/documents/families/$(resource.data.familyId)/members/$(request.resource.data.memberId)).data.userId == request.auth.uid
         )
       );
+
       allow delete: if isAuthenticated() && (
-        isAdminOfFamily(resource.data.familyId) ||
-        resource.data.userId == request.auth.uid
+        ('familyId' in resource.data && isAdminOfFamily(resource.data.familyId)) ||
+        ('userId' in resource.data && resource.data.userId == request.auth.uid)
       );
     }
 
     // 3. Family Invitations (Global Code Lookup Index)
     match /familyInvitations/{invitationId} {
       allow get: if isAuthenticated();
-      allow list: if isAuthenticated() && isMemberOfFamily(resource.data.familyId);
-      allow create: if isAuthenticated() && isAdminOfFamily(request.resource.data.familyId);
+      allow list: if isAuthenticated() && ('familyId' in resource.data) && isMemberOfFamily(resource.data.familyId);
+      allow create: if isAuthenticated() && ('familyId' in request.resource.data) && isAdminOfFamily(request.resource.data.familyId);
       allow update: if isAuthenticated() && (
         (isAdminOfFamily(resource.data.familyId) && resource.data.status == 'PENDING' && request.resource.data.status == 'REVOKED') ||
         (
@@ -135,13 +222,45 @@ service cloud.firestore {
     // 4. Families (Root Tenant Document)
     match /families/{familyId} {
       allow read: if isMemberOfFamily(familyId);
+
+      // Criação inicial legítima da família: validação mútua atômica com o primeiro vínculo ADMIN ativo canônico
       allow create: if isAuthenticated() &&
+        ('ownerUserId' in request.resource.data) &&
         request.resource.data.ownerUserId == request.auth.uid &&
-        existsAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)) &&
-        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.role == 'ADMIN' &&
-        getAfter(/databases/$(database)/documents/familyMemberships/$(familyId + '_' + request.auth.uid)).data.userId == request.auth.uid;
-      allow update: if isAdminOfFamily(familyId);
-      allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
+        !('routineReleaseAuditId' in request.resource.data) &&
+        !('routineReleaseAuditAt' in request.resource.data) &&
+        !('lastReconciliationAt' in request.resource.data) &&
+        (!('consistencyVersion' in request.resource.data) || request.resource.data.consistencyVersion == 1) &&
+        existsAfter(membershipPath(familyId)) &&
+        ('familyId' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.familyId == familyId &&
+        ('userId' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.userId == request.auth.uid &&
+        ('role' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.role == 'ADMIN' &&
+        ('status' in getAfter(membershipPath(familyId)).data) &&
+        getAfter(membershipPath(familyId)).data.status == 'ACTIVE' &&
+        (!('active' in getAfter(membershipPath(familyId)).data) ||
+          getAfter(membershipPath(familyId)).data.active == true);
+
+      // Atualização de dados da família:
+      // Apenas ADMIN ativo pode atualizar dados regulares ou ativar a suspensão rapidamente.
+      // AUD-HF3-01 / AUD-HF3-02 / AUD-HF3-HF2-02:
+      // - NENHUM cliente pode liberar routineSuspended: true -> false.
+      // - NENHUM cliente pode modificar, inicializar, incrementar, decrementar ou remover
+      //   consistencyVersion, lastReconciliationAt, routineReleaseAuditId ou routineReleaseAuditAt.
+      allow update: if isAdminOfFamily(familyId) &&
+        (!('ownerUserId' in resource.data) || request.resource.data.ownerUserId == resource.data.ownerUserId) &&
+        (!('routineSuspended' in resource.data) || resource.data.routineSuspended != true || (('routineSuspended' in request.resource.data) && request.resource.data.routineSuspended == true)) &&
+        (!('routinesSuspended' in resource.data) || resource.data.routinesSuspended != true || (('routinesSuspended' in request.resource.data) && request.resource.data.routinesSuspended == true)) &&
+        (!('routineReleaseAuditId' in request.resource.data) ? !('routineReleaseAuditId' in resource.data) : ('routineReleaseAuditId' in resource.data && request.resource.data.routineReleaseAuditId == resource.data.routineReleaseAuditId)) &&
+        (!('routineReleaseAuditAt' in request.resource.data) ? !('routineReleaseAuditAt' in resource.data) : ('routineReleaseAuditAt' in resource.data && request.resource.data.routineReleaseAuditAt == resource.data.routineReleaseAuditAt)) &&
+        (!('lastReconciliationAt' in request.resource.data) ? !('lastReconciliationAt' in resource.data) : ('lastReconciliationAt' in resource.data && request.resource.data.lastReconciliationAt == resource.data.lastReconciliationAt)) &&
+        (!('consistencyVersion' in request.resource.data) ? !('consistencyVersion' in resource.data) : ('consistencyVersion' in resource.data && request.resource.data.consistencyVersion == resource.data.consistencyVersion));
+
+      allow delete: if isAuthenticated() &&
+        ('ownerUserId' in resource.data) &&
+        resource.data.ownerUserId == request.auth.uid;
 
       // Invites subcollection under Family
       match /invites/{memberId} {
@@ -168,7 +287,7 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // Subcollections under Family
+      // Members subcollection under Family
       match /members/{memberId} {
         allow read: if isMemberOfFamily(familyId);
         allow create: if isAdminOfFamily(familyId) || isBootstrapOwnerMember(familyId);
@@ -181,9 +300,10 @@ service cloud.firestore {
               (('user_id' in resource.data) && resource.data.user_id == request.auth.uid) ||
               (callerMemberId(familyId) == memberId)
             )
-            && request.resource.data.role == resource.data.role
-            && (request.resource.data.familyId == resource.data.familyId || request.resource.data.family_id == resource.data.family_id)
-            && (!('active' in request.resource.data) || request.resource.data.active == resource.data.active)
+            && ('role' in resource.data && 'role' in request.resource.data && request.resource.data.role == resource.data.role)
+            && (('familyId' in resource.data && 'familyId' in request.resource.data && request.resource.data.familyId == resource.data.familyId) ||
+                ('family_id' in resource.data && 'family_id' in request.resource.data && request.resource.data.family_id == resource.data.family_id))
+            && (!('active' in request.resource.data) || ('active' in resource.data && request.resource.data.active == resource.data.active))
           ) ||
           // Vínculo transacional de conta via convite aceito (validação bidirecional atômica):
           (
@@ -212,52 +332,209 @@ service cloud.firestore {
         allow write: if isAdminOfFamily(familyId);
       }
 
+      // 1. ROTINAS (familyTasks) — Bloqueadas no servidor se rotinas estiverem suspensas (exceto reconciliação estrita)
       match /familyTasks/{familyTaskId} {
         allow read: if isMemberOfFamily(familyId);
-        allow write: if isAdminOfFamily(familyId);
+        allow create: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
+        allow update: if isAdminOfFamily(familyId) && (
+          !isRoutinesSuspended(familyId) ||
+          (
+            resource.data.active == true &&
+            request.resource.data.active == false &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active', 'updatedAt', 'updated_at']) &&
+            (!('id' in resource.data) || request.resource.data.id == resource.data.id) &&
+            (!('familyId' in resource.data) || request.resource.data.familyId == resource.data.familyId) &&
+            (!('family_id' in resource.data) || request.resource.data.family_id == resource.data.family_id) &&
+            (!('taskMasterId' in resource.data) || request.resource.data.taskMasterId == resource.data.taskMasterId) &&
+            (!('task_master_id' in resource.data) || request.resource.data.task_master_id == resource.data.task_master_id) &&
+            (!('roomId' in resource.data) || request.resource.data.roomId == resource.data.roomId) &&
+            (!('room_id' in resource.data) || request.resource.data.room_id == resource.data.room_id)
+          )
+        );
+        allow delete: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
       }
 
+      // 2. ÍNDICE CANÔNICO DE ROTINAS MULTIAMBIENTE (routineIndex)
+      match /routineIndex/{indexKey} {
+        allow read: if isMemberOfFamily(familyId);
+
+        allow create: if isAdminOfFamily(familyId)
+          && request.resource.data.keys().hasAll(['taskMasterId', 'roomId', 'canonicalRoutineId', 'status', 'createdAt', 'lastOperationId'])
+          && request.resource.data.keys().hasOnly(['taskMasterId', 'roomId', 'canonicalRoutineId', 'status', 'createdAt', 'updatedAt', 'lastOperationId', 'lastOperationType'])
+          && request.resource.data.taskMasterId is string
+          && request.resource.data.roomId is string
+          && request.resource.data.canonicalRoutineId is string
+          && request.resource.data.status in ['ACTIVE', 'ARCHIVED']
+          && request.resource.data.createdAt is string
+          && request.resource.data.lastOperationId is string
+          && (indexKey == (request.resource.data.taskMasterId + '___' + request.resource.data.roomId) || indexKey == ('idx_' + request.resource.data.taskMasterId + '___' + request.resource.data.roomId))
+          && existsAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId))
+          && (
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.taskMasterId == request.resource.data.taskMasterId ||
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.task_master_id == request.resource.data.taskMasterId
+          )
+          && (
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.roomId == request.resource.data.roomId ||
+            getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.room_id == request.resource.data.roomId
+          )
+          && (
+            !isRoutinesSuspended(familyId) ||
+            (
+              exists(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)) &&
+              (
+                (request.resource.data.status == 'ACTIVE' && getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.active == true) ||
+                (request.resource.data.status == 'ARCHIVED' && getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(request.resource.data.canonicalRoutineId)).data.active == false)
+              )
+            )
+          );
+
+        allow update: if isAdminOfFamily(familyId)
+          && request.resource.data.canonicalRoutineId == resource.data.canonicalRoutineId
+          && request.resource.data.taskMasterId == resource.data.taskMasterId
+          && request.resource.data.roomId == resource.data.roomId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.status in ['ACTIVE', 'ARCHIVED']
+          && (
+            !isRoutinesSuspended(familyId) ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'lastOperationId', 'lastOperationType']) &&
+              (
+                (
+                  resource.data.status == 'ACTIVE' &&
+                  request.resource.data.status == 'ARCHIVED' &&
+                  (
+                    !existsAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(resource.data.canonicalRoutineId)) ||
+                    getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(resource.data.canonicalRoutineId)).data.active == false
+                  )
+                ) ||
+                (
+                  resource.data.status == 'ARCHIVED' &&
+                  request.resource.data.status == 'ACTIVE' &&
+                  exists(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(resource.data.canonicalRoutineId)) &&
+                  getAfter(/databases/$(database)/documents/families/$(familyId)/familyTasks/$(resource.data.canonicalRoutineId)).data.active == true
+                )
+              )
+            )
+          );
+
+        allow delete: if false;
+      }
+
+      // 3. REGISTRO DE CONFLITOS DE DUPLICATAS LEGADAS (routineIndexConflicts)
+      match /routineIndexConflicts/{indexKey} {
+        allow read: if isMemberOfFamily(familyId);
+
+        allow create: if isAdminOfFamily(familyId)
+          && request.resource.data.taskMasterId is string
+          && request.resource.data.roomId is string
+          && request.resource.data.conflictingRoutineIds is list
+          && request.resource.data.conflictingRoutineIds.size() >= 2
+          && request.resource.data.status == 'PENDING_ADMIN_RESOLUTION'
+          && request.resource.data.detectedAt is string;
+
+        allow update: if isAdminOfFamily(familyId)
+          && request.resource.data.taskMasterId == resource.data.taskMasterId
+          && request.resource.data.roomId == resource.data.roomId
+          && request.resource.data.detectedAt == resource.data.detectedAt
+          && (
+            (
+              resource.data.status == 'PENDING_ADMIN_RESOLUTION' &&
+              request.resource.data.status == 'RESOLVED' &&
+              request.resource.data.chosenCanonicalRoutineId in resource.data.conflictingRoutineIds &&
+              request.resource.data.resolvedByMemberId == callerMemberId(familyId)
+            ) ||
+            (
+              resource.data.status == 'PENDING_ADMIN_RESOLUTION' &&
+              request.resource.data.status == 'PENDING_ADMIN_RESOLUTION'
+            )
+          );
+
+        allow delete: if false;
+      }
+
+      // 4. LEDGER DE OPERAÇÕES EM LOTE (operationLedgers)
+      match /operationLedgers/{operationId} {
+        allow read: if isMemberOfFamily(familyId);
+
+        allow create: if isAdminOfFamily(familyId)
+          && !isRoutinesSuspended(familyId)
+          && request.resource.data.operationId == operationId
+          && request.resource.data.familyId == familyId
+          && request.resource.data.status in ['IN_FLIGHT', 'COMMITTED', 'PARTIALLY_COMMITTED', 'ABORTED']
+          && request.resource.data.createdAt is string
+          && request.resource.data.items is map;
+
+        allow update: if isAdminOfFamily(familyId)
+          && request.resource.data.operationId == resource.data.operationId
+          && request.resource.data.familyId == resource.data.familyId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (!isRoutinesSuspended(familyId) || request.resource.data.status == 'ABORTED')
+          && (resource.data.status != 'COMMITTED' || request.resource.data.status == 'PARTIALLY_COMMITTED');
+
+        allow delete: if false;
+      }
+
+      // 5. REGISTROS DE AUDITORIA DE LIBERAÇÃO DE SUSPENSÃO (routineReleaseAudits)
+      match /routineReleaseAudits/{auditId} {
+        allow read: if isMemberOfFamily(familyId);
+        // AUD-HF3-01: NENHUM cliente (nem ADMIN, nem MEMBER) pode criar, alterar ou excluir auditorias.
+        allow create, update, delete: if false;
+      }
+
+      // 6. OCORRÊNCIAS (assignments) — Preservação estrita de histórico COMPLETED/DONE + bloqueio sob suspensão
       match /assignments/{assignmentId} {
         allow read: if isMemberOfFamily(familyId);
-        allow create, delete: if isAdminOfFamily(familyId);
+        allow create: if isAdminOfFamily(familyId) && !isRoutinesSuspended(familyId);
+        allow delete: if isAdminOfFamily(familyId) &&
+          !isRoutinesSuspended(familyId) &&
+          resource.data.status != 'COMPLETED' &&
+          resource.data.status != 'DONE' &&
+          (!('completed_at' in resource.data) || resource.data.completed_at == null) &&
+          (!('completedAt' in resource.data) || resource.data.completedAt == null);
         allow update: if isMemberOfFamily(familyId) && (
-          isAdminOfFamily(familyId) || (
+          (
+            isAdminOfFamily(familyId) &&
+            !isRoutinesSuspended(familyId) &&
+            resource.data.status != 'COMPLETED' &&
+            resource.data.status != 'DONE'
+          ) || (
             // MEMBER defense-in-depth:
             // 1. Isolamento estrito de tenant
-            request.resource.data.family_id == familyId &&
-            resource.data.family_id == familyId &&
+            (('family_id' in request.resource.data && request.resource.data.family_id == familyId) ||
+             ('familyId' in request.resource.data && request.resource.data.familyId == familyId)) &&
+            (('family_id' in resource.data && resource.data.family_id == familyId) ||
+             ('familyId' in resource.data && resource.data.familyId == familyId)) &&
 
-            // 2. Imutabilidade da identidade e metadados estruturais
+            // 2. Imutabilidade da identidade estrutural
             (!('task_id' in resource.data) || request.resource.data.task_id == resource.data.task_id) &&
+            (!('taskId' in resource.data) || request.resource.data.taskId == resource.data.taskId) &&
+            (!('routineId' in resource.data) || request.resource.data.routineId == resource.data.routineId) &&
             (!('scheduled_date' in resource.data) || request.resource.data.scheduled_date == resource.data.scheduled_date) &&
+            (!('date' in resource.data) || request.resource.data.date == resource.data.date) &&
             (!('room_id' in resource.data) || request.resource.data.room_id == resource.data.room_id) &&
+            (!('roomId' in resource.data) || request.resource.data.roomId == resource.data.roomId) &&
 
-            // 3. Proibido reverter tarefa COMPLETED
+            // 3. Proibido reverter tarefa COMPLETED ou DONE
             resource.data.status != 'COMPLETED' &&
             resource.data.status != 'DONE' &&
 
-            // 4. Somente transição válida para status COMPLETED
+            // 4. Somente transição válida para status COMPLETED ou DONE
             (request.resource.data.status == 'COMPLETED' || request.resource.data.status == 'DONE') &&
-            request.resource.data.completed_by == callerMemberId(familyId) &&
-            ('completed_at' in request.resource.data) &&
+            (('completed_by' in request.resource.data && request.resource.data.completed_by == callerMemberId(familyId)) ||
+             ('completedBy' in request.resource.data && request.resource.data.completedBy == callerMemberId(familyId))) &&
+            (('completed_at' in request.resource.data) || ('completedAt' in request.resource.data)) &&
 
             // 5. Autorização do responsável (CASO 1 ou CASO 2):
             (
               // CASO 1: NORMAL_COMPLETION (Tarefa já atribuída ao próprio morador)
               (
-                resource.data.member_id == callerMemberId(familyId) &&
-                request.resource.data.member_id == callerMemberId(familyId)
+                assignmentMemberId(resource.data) == callerMemberId(familyId) &&
+                assignmentMemberId(request.resource.data) == callerMemberId(familyId)
               ) ||
               // CASO 2: SELF_CLAIMED (Tarefa unassigned assumida no ato da conclusão)
               (
-                (
-                  !('is_unassigned' in resource.data) ||
-                  resource.data.is_unassigned == true ||
-                  !('member_id' in resource.data) ||
-                  resource.data.member_id == '' ||
-                  resource.data.member_id == null
-                ) &&
-                request.resource.data.member_id == callerMemberId(familyId)
+                isAssignmentUnassigned(resource.data) &&
+                assignmentMemberId(request.resource.data) == callerMemberId(familyId)
               )
             )
           )
@@ -296,12 +573,9 @@ service cloud.firestore {
 
       // DOMESTIC-SUPPORT-1A: AJUDA EXTERNA / DIARISTA (CLEANER)
       match /domesticSupports/{domesticSupportId} {
-        // Read: Qualquer membro autenticado da família
         allow read: if isMemberOfFamily(familyId);
-        // Write: Exclusivo ADMIN da família (criação, edição, desativação/reativação)
-        // Bloqueia cross-tenant e proíbe hard delete
         allow create, update: if isAdminOfFamily(familyId) &&
-          request.resource.data.familyId == familyId;
+          ('familyId' in request.resource.data && request.resource.data.familyId == familyId);
         allow delete: if false; // Preservação de histórico estrita, nunca hard delete
       }
 
@@ -313,8 +587,6 @@ service cloud.firestore {
 
       // CHAOS-1A: MODO CAOS — SESSIONS & CONCURRENCY LOCK
       match /chaosSessions/{sessionId} {
-        // ADMIN can read any session in family.
-        // MEMBER can read only if status == 'ACTIVE' and caller is in participantMemberIds.
         allow read: if isMemberOfFamily(familyId) && (
           isAdminOfFamily(familyId) || (
             resource.data.status == 'ACTIVE' &&
@@ -322,18 +594,13 @@ service cloud.firestore {
           )
         );
         allow create: if isAdminOfFamily(familyId) &&
-          request.resource.data.status == 'DRAFT' &&
-          request.resource.data.familyId == familyId;
+          ('status' in request.resource.data && request.resource.data.status == 'DRAFT') &&
+          ('familyId' in request.resource.data && request.resource.data.familyId == familyId);
         allow update: if isAdminOfFamily(familyId) && (
-          // DRAFT -> ACTIVE
           (resource.data.status == 'DRAFT' && request.resource.data.status == 'ACTIVE') ||
-          // DRAFT -> CANCELLED
           (resource.data.status == 'DRAFT' && request.resource.data.status == 'CANCELLED') ||
-          // DRAFT update config
           (resource.data.status == 'DRAFT' && request.resource.data.status == 'DRAFT') ||
-          // ACTIVE -> COMPLETED
           (resource.data.status == 'ACTIVE' && request.resource.data.status == 'COMPLETED') ||
-          // ACTIVE -> ACTIVE (time extensions, late participants)
           (resource.data.status == 'ACTIVE' && request.resource.data.status == 'ACTIVE')
         );
         allow delete: if false; // Preservação de histórico estrita, nunca hard delete
